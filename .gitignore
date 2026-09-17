@@ -1,4 +1,7 @@
 .env
+.env.local
+.venv/
 __pycache__/
 *.pyc
-.venv/
+*.wav
+audio_chunks/
