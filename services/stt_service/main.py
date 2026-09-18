@@ -1,37 +1,27 @@
 """
 Agni AI - Speech-to-Text Service
 
-This service exposes the existing STT API used by the Agni AI
-voice pipeline.
+This service exposes the STT APIs used by the Agni AI voice pipeline.
 
-Endpoint:
+Endpoints:
+    GET  /
     POST /audio
+    WS   /api/v1/stt/stream
 
-Request:
-    multipart/form-data
-    field name: file
+The /audio endpoint handles individual WAV uploads.
 
-Expected audio:
-    WAV
-    PCM 16-bit
-    16 kHz
-    Mono
-
-Processing:
-    WAV audio
-        ↓
-    FastAPI
-        ↓
-    Deepgram Nova-3
-        ↓
-    Transcript
+The /api/v1/stt/stream endpoint handles continuous raw PCM16
+audio streaming for the LiveKit voice pipeline.
 """
 
 import os
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile
+
 from deepgram import DeepgramClient
+
+from app.api.v1.stt import router as streaming_stt_router
 
 
 # ---------------------------------------------------------------------------
@@ -49,12 +39,33 @@ load_dotenv(".env.local", override=True)
 
 app = FastAPI(
     title="Agni AI STT Service",
-    description="Speech-to-text service for the Agni AI voice pipeline",
+    description=(
+        "Speech-to-text service for the Agni AI voice pipeline"
+    ),
 )
 
 
 # ---------------------------------------------------------------------------
-# Deepgram client
+# Streaming STT router
+# ---------------------------------------------------------------------------
+
+# Registers:
+#
+#     WS /api/v1/stt/stream
+#
+# This endpoint uses the streaming Deepgram service implemented in:
+#
+#     app/services/stt_service.py
+#
+# The existing /audio endpoint below remains unchanged.
+app.include_router(
+    streaming_stt_router,
+    prefix="/api/v1",
+)
+
+
+# ---------------------------------------------------------------------------
+# Deepgram client for the existing /audio endpoint
 # ---------------------------------------------------------------------------
 
 deepgram_api_key = os.getenv("DEEPGRAM_API_KEY")
@@ -90,13 +101,18 @@ async def home():
 
 @app.post("/audio")
 async def receive_audio(
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
 ):
     """
     Receive a WAV audio chunk and send it to Deepgram.
 
-    The LiveKit integration will eventually send 2-second
-    WAV chunks to this endpoint.
+    This is the existing chunk-based transcription endpoint.
+
+    Expected audio:
+        WAV
+        PCM 16-bit
+        16 kHz
+        Mono
     """
 
     # Read the uploaded WAV file into memory.
