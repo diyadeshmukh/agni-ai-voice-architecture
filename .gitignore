@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 *.wav
 audio_chunks/
+latency_log.csv
