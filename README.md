@@ -1,6 +1,6 @@
 # Agni AI — Voice Architecture & Real-Time Voice Pipeline
 
-> A modular real-time voice pipeline for Agni AI using **LiveKit**, **Deepgram**, and **ElevenLabs**.
+> A modular real-time voice pipeline for Agni AI using **LiveKit**, **Deepgram**, **OpenAI**, **ElevenLabs**, and **FastAPI**.
 
 ---
 
@@ -8,7 +8,7 @@
 
 Agni AI is being developed as a real-time voice AI system with a modular provider-based architecture.
 
-This repository contains the current voice architecture, streaming Speech-to-Text (STT) implementation, Text-to-Speech (TTS) provider layer, and LiveKit proof-of-concept (POC) components.
+This repository contains the current voice architecture, streaming Speech-to-Text (STT) implementation, OpenAI LLM provider layer, Text-to-Speech (TTS) provider layer, and LiveKit proof-of-concept (POC) components.
 
 The main goal is to keep the voice pipeline modular so that individual providers can be replaced or integrated independently.
 
@@ -25,10 +25,10 @@ Caller / Microphone
    (Deepgram)
         │
         ▼
-    Transcript
+Completed Utterance
         │
         ▼
-      LLM
+   OpenAI LLM
         │
         ▼
  AI Response Text
@@ -47,11 +47,12 @@ Caller / Microphone
 Caller / Speaker
 ```
 
-The current repository has working STT and TTS components. LLM and telephony integration are planned for the next stages.
+> **Important:** Interim STT transcripts are displayed locally but are **not sent to OpenAI**.
+> Only completed utterances are sent to the LLM.
 
 ---
 
-# Current Status
+## Current Status
 
 | Component | Status | Description |
 |---|---|---|
@@ -60,29 +61,32 @@ The current repository has working STT and TTS components. LLM and telephony int
 | LiveKit audio subscription | ✅ Working | Receives remote audio tracks |
 | Microphone capture | ✅ Working | Local microphone testing |
 | Streaming STT | ✅ Working | Deepgram real-time transcription |
-| Interim transcripts | ✅ Working | Displays changing speech recognition results |
-| Final transcripts | ✅ Working | Displays finalized recognition results |
+| Interim transcripts | ✅ Working | Displayed locally only |
+| Final transcripts | ✅ Working | Final speech recognition results |
+| Utterance detection | ✅ Working | Uses final transcript + utterance end |
+| LLM provider interface | ✅ Working | Provider-independent LLM contract |
+| OpenAI LLM | ✅ Working | Generates concise AI responses |
+| STT → LLM integration | ✅ Working | One LLM call per completed utterance |
 | TTS provider interface | ✅ Working | Provider-independent TTS contract |
 | ElevenLabs TTS | ✅ Working | Streaming text-to-speech |
 | LiveKit TTS output | ✅ Working | Publishes generated speech into LiveKit |
 | Local TTS playback | ✅ Working | TTS listener plays received audio |
-| Custom TTS text | ✅ Working | Command-line text can be synthesized |
-| LLM integration | 🔄 Planned | Connect AI response generation |
-| STT → LLM → TTS | 🔄 Planned | Complete conversational pipeline |
-| Telephony / Exotel | 🔄 Planned | Phone-call integration |
-| Barge-in / interruption | 🔄 Planned | Interrupt active AI speech |
-| Production orchestration | 🔄 Planned | Complete voice session runtime |
+| STT → LLM → TTS | ✅ Working | End-to-end local voice flow verified |
+| Response latency logging | ✅ Working | Measures main voice response stages |
+| LLM diagnostic POC | ✅ Working | Standalone OpenAI test |
+| Echo / feedback suppression | ✅ POC | Mic audio suppressed while AI is active |
+| Barge-in / interruption | 🚧 Pending | User interruption while AI speaks |
+| Conversation history | 🚧 Pending | Current LLM request is stateless |
+| Telephony / Exotel | 🚧 Planned | Phone-call integration |
+| Production orchestration | 🚧 Planned | Session lifecycle and backend integration |
 
 ---
 
-# Architecture
-
-The repository follows a layered architecture.
+## Architecture
 
 ```text
                     ┌───────────────────────┐
-                    │        Caller         │
-                    │   Phone / Microphone  │
+                    │   User / Microphone   │
                     └───────────┬───────────┘
                                 │
                                 ▼
@@ -93,37 +97,74 @@ The repository follows a layered architecture.
                                 │
                                 ▼
                     ┌───────────────────────┐
-                    │         STT           │
-                    │       Deepgram        │
+                    │     Deepgram STT      │
+                    │    Streaming Speech   │
+                    └───────────┬───────────┘
+                                │
+                        Completed Utterance
+                                │
+                                ▼
+                    ┌───────────────────────┐
+                    │      OpenAI LLM       │
+                    │   AI Response Text    │
                     └───────────┬───────────┘
                                 │
                                 ▼
                     ┌───────────────────────┐
-                    │         LLM           │
-                    │    AI Response Text   │
-                    └───────────┬───────────┘
-                                │
-                                ▼
-                    ┌───────────────────────┐
-                    │         TTS           │
-                    │      ElevenLabs       │
+                    │     ElevenLabs TTS    │
+                    │    Streaming Speech   │
                     └───────────┬───────────┘
                                 │
                                 ▼
                     ┌───────────────────────┐
                     │        LiveKit        │
-                    │     Audio Output      │
+                    │     voice-output      │
                     └───────────┬───────────┘
                                 │
                                 ▼
                     ┌───────────────────────┐
-                    │        Caller         │
+                    │   User / TTS Listener │
                     └───────────────────────┘
 ```
 
 ---
 
-# Streaming STT Architecture
+## Completed-Utterance LLM Design
+
+The current voice pipeline is designed to minimize unnecessary LLM requests.
+
+### Interim transcript
+
+```text
+[PARTIAL] Hello, Agni...
+        ↓
+Displayed in terminal
+        ↓
+No OpenAI request
+```
+
+### Completed utterance
+
+```text
+[FINAL] Hello, Agni AI.
+        ↓
+[VAD] Utterance ended
+        ↓
+"Hello, Agni AI."
+        ↓
+One OpenAI request
+```
+
+This prevents:
+
+- duplicate LLM calls
+- unnecessary token usage
+- responses to unfinished speech
+- repeated AI replies from interim STT text
+
+---
+
+## Streaming STT Architecture
 
 The current STT path is:
 
@@ -136,32 +177,98 @@ AudioFrame
     ↓
 Audio conversion / resampling
     ↓
-16 kHz PCM16
+PCM16 @ 16 kHz mono
     ↓
 STTStreamAdapter
     ↓
+FastAPI WebSocket
+    ↓
 Deepgram Streaming STT
     ↓
-Interim / Final Transcript
+Partial / Final / VAD events
 ```
 
-The implementation is designed for continuous real-time audio instead of waiting for a complete recording.
+### Current STT endpoint
 
-### STT responsibilities
+```text
+ws://127.0.0.1:8000/api/v1/stt/stream
+```
 
-The STT layer handles:
+### STT events
 
-- Streaming audio input
-- Deepgram connection
-- Audio transmission
-- Interim results
-- Final results
-- Stream finalization
-- STT event handling
+The streaming service can emit:
+
+```text
+partial
+final
+speech_started
+utterance_end
+silence
+incomplete_speech
+error
+```
 
 ---
 
-# TTS Architecture
+## LLM Architecture
+
+The LLM layer uses a provider interface so the voice pipeline is not tightly coupled to one implementation.
+
+### LLM provider interface
+
+File:
+
+```text
+app/voice/llm_provider.py
+```
+
+Core contract:
+
+```python
+async def stream_response(
+    self,
+    user_text: str,
+) -> AsyncIterator[str]:
+    ...
+```
+
+The interface also provides:
+
+```python
+async def generate_response(
+    self,
+    user_text: str,
+) -> str:
+    ...
+```
+
+### OpenAI provider
+
+File:
+
+```text
+app/voice/openai_llm_provider.py
+```
+
+Responsibilities:
+
+- load OpenAI configuration
+- initialize the asynchronous OpenAI client
+- accept completed user utterances
+- stream response text
+- keep voice responses concise
+- limit output tokens
+
+Typical configuration:
+
+```env
+OPENAI_MODEL=gpt-5.6-luna
+OPENAI_MAX_OUTPUT_TOKENS=120
+```
+
+---
+
+## TTS Architecture
 
 The current TTS path is:
 
@@ -182,64 +289,9 @@ LiveKitAudioOutput
        ↓
  LocalAudioTrack
        ↓
-    LiveKit
+  voice-output
        ↓
- Remote Listener / Caller
-```
-
-The TTS layer is provider-independent.
-
-This means the application can use an alternative TTS provider later without changing the rest of the voice pipeline.
-
----
-
-# Provider Abstraction
-
-The project defines a common TTS provider interface in:
-
-```text
-app/voice/tts_provider.py
-```
-
-The interface is based on:
-
-```python
-async def synthesize(
-    text: str,
-) -> AsyncIterator[TTSAudioChunk]:
-    ...
-```
-
-The current implementation is:
-
-```text
-app/voice/elevenlabs_tts_provider.py
-```
-
-The architecture can later support:
-
-```text
-                 TTSProvider
-                     │
-          ┌──────────┼──────────┐
-          │          │          │
-          ▼          ▼          ▼
-      ElevenLabs  Provider B  Provider C
-```
-
----
-
-# Audio Contract
-
-The TTS provider layer uses a standard audio representation:
-
-```python
-@dataclass
-class TTSAudioChunk:
-    data: bytes
-    sample_rate: int
-    channels: int = 1
-    encoding: str = "pcm_s16le"
+    LiveKit
 ```
 
 ### Current audio format
@@ -249,13 +301,39 @@ class TTSAudioChunk:
 | Encoding | PCM 16-bit little-endian |
 | Sample rate | 16,000 Hz |
 | Channels | Mono |
-| TTS output format | `pcm_16000` |
-
-Keeping the audio format explicit makes it easier to integrate TTS output with LiveKit and other downstream components.
+| ElevenLabs output | `pcm_16000` |
+| TTS model | `eleven_flash_v2_5` |
 
 ---
 
-# Project Structure
+## Provider Abstraction
+
+The voice architecture keeps provider-specific logic separate from the main pipeline.
+
+```text
+                Voice Pipeline
+                     │
+          ┌──────────┼──────────┐
+          │          │          │
+          ▼          ▼          ▼
+        STT          LLM        TTS
+          │          │          │
+          ▼          ▼          ▼
+      Deepgram    OpenAI    ElevenLabs
+```
+
+Current provider files:
+
+```text
+app/voice/llm_provider.py
+app/voice/openai_llm_provider.py
+app/voice/tts_provider.py
+app/voice/elevenlabs_tts_provider.py
+```
+
+---
+
+## Project Structure
 
 ```text
 agni-ai/
@@ -289,6 +367,8 @@ agni-ai/
 │       ├── audio_buffer.py
 │       ├── elevenlabs_tts_provider.py
 │       ├── livekit_audio_output.py
+│       ├── llm_provider.py
+│       ├── openai_llm_provider.py
 │       ├── stt_adapter.py
 │       ├── stt_stream_adapter.py
 │       └── tts_provider.py
@@ -302,6 +382,7 @@ agni-ai/
 │   ├── audio_publisher.py
 │   ├── audio_subscriber.py
 │   ├── connect_room.py
+│   ├── llm_poc.py
 │   ├── tts_listener.py
 │   └── tts_publisher.py
 │
@@ -311,292 +392,86 @@ agni-ai/
         └── main.py
 ```
 
----
-
-# Main Components
-
-## `app/voice/tts_provider.py`
-
-Defines the common TTS provider interface.
-
-It allows the main voice pipeline to use a provider through a common contract instead of directly depending on a vendor SDK.
+> `latency_log.csv` is generated during STT testing and is ignored by Git.
 
 ---
 
-## `app/voice/elevenlabs_tts_provider.py`
+## Main Components
 
-Concrete ElevenLabs implementation of the TTS provider interface.
+### `livekit_poc/audio_subscriber.py`
 
-Responsibilities include:
-
-- ElevenLabs client initialization
-- Authentication using environment variables
-- Text-to-speech generation
-- Streaming audio
-- Conversion of provider output to `TTSAudioChunk`
-
-Current configuration:
-
-```text
-Model:
-eleven_flash_v2_5
-
-Output:
-pcm_16000
-
-Channels:
-1
-
-Sample rate:
-16,000 Hz
-```
-
----
-
-## `app/voice/livekit_audio_output.py`
-
-Converts application-level TTS audio chunks into LiveKit audio frames.
-
-Flow:
-
-```text
-TTSAudioChunk
-      ↓
-PCM16 AudioFrame
-      ↓
-LiveKit AudioSource
-      ↓
-LocalAudioTrack
-      ↓
-LiveKit Room
-```
-
-This keeps LiveKit-specific audio logic separate from the TTS provider.
-
----
-
-## `app/services/stt_service.py`
-
-Contains the current streaming Deepgram STT implementation.
-
-Responsibilities include:
-
-- Creating the Deepgram streaming connection
-- Sending audio
-- Receiving transcription events
-- Processing interim results
-- Processing final results
-- Finalizing the stream
-
----
-
-## `app/voice/stt_stream_adapter.py`
-
-Provides an adapter around the streaming STT connection.
-
-The adapter exposes a simpler application-level flow:
-
-```text
-Connect
-   ↓
-Send Audio
-   ↓
-Receive Events
-   ↓
-Close
-```
-
----
-
-## `app/api/v1/stt.py`
-
-FastAPI WebSocket route used by the streaming STT service.
-
-Current local endpoint:
-
-```text
-ws://127.0.0.1:8000/api/v1/stt/stream
-```
-
----
-
-## `services/stt_service/main.py`
-
-FastAPI service entry point.
-
-Current routes include:
-
-```text
-GET /
-POST /audio
-WebSocket /api/v1/stt/stream
-```
-
-The `/audio` route supports the existing file-based STT flow, while the WebSocket route is used for streaming STT.
-
----
-
-# LiveKit POC
-
-The `livekit_poc/` directory contains standalone programs used to validate pieces of the voice architecture.
-
-These programs allow STT and TTS to be tested independently before integrating the complete AI voice agent.
-
----
-
-# LiveKit + STT POC
-
-The main LiveKit STT subscriber is:
-
-```text
-livekit_poc/audio_subscriber.py
-```
+This is the current integrated voice pipeline.
 
 It:
 
-1. Connects to a LiveKit room.
-2. Subscribes to incoming audio.
-3. Receives LiveKit audio frames.
-4. Converts/resamples the audio when required.
-5. Sends audio to the streaming STT adapter.
-6. Displays interim and final transcripts.
-
-### Run
-
-From the project root:
-
-```powershell
-conda activate agni-ai
-python -m livekit_poc.audio_subscriber
-```
+1. Connects to LiveKit.
+2. Waits for the microphone track.
+3. Connects to the streaming STT service.
+4. Sends microphone audio to Deepgram.
+5. Receives STT events.
+6. Collects completed utterances.
+7. Sends only completed utterances to OpenAI.
+8. Sends the LLM response to ElevenLabs.
+9. Publishes generated AI speech to LiveKit.
+10. Measures response latency.
+11. Suppresses microphone audio while the AI is active.
 
 ---
 
-# LiveKit + TTS POC
+### `livekit_poc/audio_publisher.py`
 
-The TTS POC uses two programs:
-
-```text
-livekit_poc/tts_publisher.py
-livekit_poc/tts_listener.py
-```
-
-The publisher generates speech and publishes the audio into LiveKit.
-
-The listener subscribes to the generated track and plays the received audio through the local speaker.
-
-### TTS flow
-
-```text
-Text
- ↓
-ElevenLabs
- ↓
-PCM16 Streaming Audio
- ↓
-LiveKit AudioSource
- ↓
-LiveKit AudioTrack
- ↓
-TTS Listener
- ↓
-Laptop Speaker
-```
+Publishes local microphone audio into the LiveKit room.
 
 ---
 
-# Running the TTS Listener
+### `livekit_poc/tts_listener.py`
 
-Open a terminal from the project root and activate the environment:
-
-```powershell
-conda activate agni-ai
-```
-
-Run:
-
-```powershell
-python -m livekit_poc.tts_listener
-```
-
-Expected behavior:
-
-```text
-========================================================================
-AGNI AI - TTS LISTENER
-========================================================================
-
-Connecting to LiveKit...
-Connected to LiveKit.
-
-Waiting for 'voice-output'...
-Keep this terminal running while the TTS publisher is active.
-```
-
-The listener waits for the LiveKit audio track:
+Subscribes to:
 
 ```text
 voice-output
 ```
 
----
-
-# Running the TTS Publisher
-
-Open a second terminal.
-
-Activate the environment:
-
-```powershell
-conda activate agni-ai
-```
-
-Run:
-
-```powershell
-python -m livekit_poc.tts_publisher
-```
-
-The publisher:
-
-1. Loads the TTS provider.
-2. Connects to LiveKit.
-3. Publishes the `voice-output` track.
-4. Sends the text to ElevenLabs.
-5. Receives streaming PCM16 audio chunks.
-6. Sends the chunks to LiveKit.
-7. Waits for audio playout.
-8. Disconnects.
+and plays received AI audio through the local speaker/output device.
 
 ---
 
-# Custom TTS Text
+### `livekit_poc/tts_publisher.py`
 
-The TTS publisher accepts custom text from the command line.
+Standalone ElevenLabs → LiveKit TTS test.
 
 Example:
 
 ```powershell
-python -m livekit_poc.tts_publisher "Hello, this is a custom Agni AI response being converted to speech and published through LiveKit."
+python -m livekit_poc.tts_publisher "Hello from Agni AI."
 ```
-
-This allows different response texts to be tested without modifying the source code.
 
 ---
 
-# Development Environment
+### `livekit_poc/llm_poc.py`
 
-The current project is developed on Windows using Anaconda / Conda.
+Standalone OpenAI diagnostic.
 
-Recommended development environment:
+```powershell
+python -m livekit_poc.llm_poc "Reply only with: Agni AI ready."
+```
 
-| Component | Current setup |
+> **Note:** This command makes a real OpenAI API request and consumes API usage.
+
+---
+
+## Development Environment
+
+Current development setup:
+
+| Component | Current Setup |
 |---|---|
 | Operating system | Windows |
 | Environment | Conda |
 | Environment name | `agni-ai` |
 | Python | 3.11.x |
 | STT | Deepgram |
+| LLM | OpenAI |
 | TTS | ElevenLabs |
 | Voice transport | LiveKit |
 | API framework | FastAPI |
@@ -615,18 +490,22 @@ python --version
 
 ---
 
-# Environment Variables
+## Environment Variables
 
-Local configuration is stored in:
+Local provider configuration is stored in:
 
 ```text
 .env.local
 ```
 
-Typical configuration:
+Example:
 
 ```env
 DEEPGRAM_API_KEY=<your-key>
+
+OPENAI_API_KEY=<your-key>
+OPENAI_MODEL=gpt-5.6-luna
+OPENAI_MAX_OUTPUT_TOKENS=120
 
 ELEVENLABS_API_KEY=<your-key>
 ELEVENLABS_VOICE_ID=<your-voice-id>
@@ -643,11 +522,277 @@ LIVEKIT_TTS_PUBLISHER_IDENTITY=agni-tts-publisher
 LIVEKIT_TTS_LISTENER_IDENTITY=agni-tts-listener
 ```
 
-> **Important:** Never put real API keys, API secrets, access tokens, or passwords in this README or in source code.
+> **Important:** Never place real API keys, API secrets, tokens, or passwords in the README.
 
 ---
 
-# Security
+## Running the Integrated Voice POC
+
+Use four terminals.
+
+### Terminal 1 — STT Service
+
+Run:
+
+```powershell
+uvicorn services.stt_service.main:app
+```
+
+> For voice-pipeline testing, avoid `--reload` because file changes can restart the FastAPI process and interrupt an active WebSocket connection.
+
+---
+
+### Terminal 2 — TTS Listener
+
+Run:
+
+```powershell
+python -m livekit_poc.tts_listener
+```
+
+Expected:
+
+```text
+AGNI AI - TTS LISTENER
+
+Connecting to LiveKit...
+Connected to LiveKit.
+
+Waiting for 'voice-output'...
+```
+
+---
+
+### Terminal 3 — Integrated Voice Pipeline
+
+Run:
+
+```powershell
+python -m livekit_poc.audio_subscriber
+```
+
+Expected:
+
+```text
+Waiting for microphone track...
+Microphone track ready.
+Connecting to streaming STT...
+Streaming STT connected.
+
+Voice pipeline ready.
+Only completed utterances are sent to OpenAI.
+```
+
+---
+
+### Terminal 4 — Microphone Publisher
+
+Run:
+
+```powershell
+python -m livekit_poc.audio_publisher
+```
+
+Expected:
+
+```text
+Microphone audio published
+Track: microphone
+
+Speak into the microphone...
+```
+
+---
+
+## Verified End-to-End Flow
+
+The complete local flow has been successfully verified:
+
+```text
+Microphone
+    ↓
+LiveKit
+    ↓
+Deepgram STT
+    ↓
+Final Transcript
+    ↓
+Utterance End
+    ↓
+OpenAI LLM
+    ↓
+AI Response Text
+    ↓
+ElevenLabs TTS
+    ↓
+PCM16 Audio
+    ↓
+LiveKit voice-output
+    ↓
+TTS Listener
+    ↓
+Speaker
+```
+
+Example verified interaction:
+
+```text
+User:
+Hello, Agni AI?
+
+Agni AI:
+Hello! You’ve reached Agni AI. How can I help you today?
+```
+
+---
+
+## Response Latency
+
+The integrated runtime reports:
+
+```text
+Final transcript -> utterance end
+Pipeline queue delay
+LLM first text chunk
+LLM complete response
+ElevenLabs first audio chunk
+Utterance end -> first AI audio
+TTS generation/streaming
+Utterance end -> playback complete
+```
+
+One local POC run measured:
+
+| Stage | Observed Time |
+|---|---:|
+| Final transcript → utterance end | 1.015 s |
+| Pipeline queue delay | 0.001 s |
+| LLM first text chunk | 2.402 s |
+| LLM complete response | 2.683 s |
+| ElevenLabs first audio chunk | 0.556 s |
+| Utterance end → first AI audio | 3.241 s |
+| TTS generation / streaming | 2.993 s |
+| Utterance end → playback complete | 6.657 s |
+
+> These values are from one local POC run and should not be treated as production benchmarks.
+
+---
+
+## Standalone TTS Test
+
+The TTS path can be tested separately:
+
+```text
+Text
+ ↓
+ElevenLabs
+ ↓
+PCM16
+ ↓
+LiveKitAudioOutput
+ ↓
+LiveKit
+ ↓
+TTS Listener
+ ↓
+Speaker
+```
+
+Example:
+
+```powershell
+python -m livekit_poc.tts_publisher "Hello! You've reached Agni AI. How can I help you today?"
+```
+
+Standalone playback has been verified as clear.
+
+---
+
+## Echo / Feedback Handling
+
+The integrated POC currently uses a simple suppression mechanism:
+
+```text
+AI generating / speaking
+        ↓
+Microphone frames received
+        ↓
+Replace frames with silence
+        ↓
+Continue Deepgram connection
+```
+
+This prevents the local speaker output from being immediately treated as new user speech.
+
+> This is a POC mechanism, not full production acoustic echo cancellation.
+
+---
+
+## Known POC Limitations
+
+### Barge-In
+
+True interruption is not implemented yet.
+
+Current behavior:
+
+```text
+AI speaking
+    ↓
+Microphone suppressed
+    ↓
+User cannot interrupt AI
+```
+
+Future behavior should support:
+
+```text
+AI speaking
+    ↓
+User starts speaking
+    ↓
+Detect interruption
+    ↓
+Cancel current playback
+    ↓
+Transcribe user
+    ↓
+Generate new response
+```
+
+### Conversation History
+
+The current OpenAI request contains only the current completed utterance.
+
+No conversation history is sent yet.
+
+### Occasional Integrated Playback Repetition
+
+Occasional word repetition/stuttering was heard during an integrated response.
+
+The same sentence played clearly through the standalone:
+
+```text
+ElevenLabs → LiveKit → TTS Listener
+```
+
+path.
+
+Therefore, the standalone TTS implementation is verified, while the integrated repetition issue remains for later diagnosis.
+
+### Telephony
+
+The current POC uses:
+
+- local microphone publishing
+- local LiveKit room
+- local TTS listener
+
+Exotel / SIP integration is still pending.
+
+---
+
+## Security
 
 The following files may contain credentials:
 
@@ -656,455 +801,126 @@ The following files may contain credentials:
 .env.local
 ```
 
-These files should remain excluded from version control.
+Generated runtime files such as:
 
-Before committing changes, verify:
+```text
+latency_log.csv
+```
+
+must also remain untracked.
+
+Current `.gitignore` should include:
+
+```gitignore
+.env
+.env.local
+.venv/
+__pycache__/
+*.pyc
+*.wav
+audio_chunks/
+latency_log.csv
+```
+
+Before committing:
 
 ```powershell
 git status
+git diff --cached --check
 ```
 
-and make sure no credentials are being staged.
-
-Never publish:
+Never commit:
 
 - API keys
 - API secrets
-- Access tokens
-- Passwords
-- Private credentials
+- passwords
+- access tokens
+- private credentials
 
 ---
 
-# FastAPI STT Service
+## Development Principles
 
-The FastAPI STT service can be started with:
+### Modularity
 
-```powershell
-uvicorn services.stt_service.main:app --reload
-```
+Keep STT, LLM, TTS, LiveKit transport, telephony, and backend logic separate.
 
-Local server:
+### Provider Independence
 
-```text
-http://127.0.0.1:8000
-```
+Use provider interfaces instead of tightly coupling application logic to vendor SDKs.
 
-### Available routes
+### Completed-Utterance LLM Calls
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| `GET` | `/` | Service root |
-| `POST` | `/audio` | File-based STT |
-| `WebSocket` | `/api/v1/stt/stream` | Streaming STT |
+Never call the LLM from interim STT output.
 
-Streaming WebSocket URL:
+### Streaming First
 
-```text
-ws://127.0.0.1:8000/api/v1/stt/stream
-```
+Use streaming where it improves real-time behavior without causing duplicate requests.
 
----
+### Clear Audio Contracts
 
-# Streaming Design
+Keep encoding, sample rate, channel count, and frame format explicit.
 
-The project uses streaming instead of waiting for complete audio whenever possible.
+### Independent Testing
 
-## STT streaming
+Test STT, LLM, and TTS separately before debugging the complete pipeline.
 
-```text
-Audio Frame 1 ─┐
-Audio Frame 2 ─┤
-Audio Frame 3 ─┤──→ Deepgram
-Audio Frame 4 ─┤
-Audio Frame 5 ─┘
-```
+### API Usage Awareness
 
-## TTS streaming
-
-```text
-Text
- ↓
-Audio Chunk 1 ─┐
-Audio Chunk 2 ─┤
-Audio Chunk 3 ─┤──→ LiveKit
-Audio Chunk 4 ─┤
-Audio Chunk 5 ─┘
-```
-
-Streaming makes it possible to begin processing or playing audio before the complete response has been generated.
+Avoid unnecessary provider tests when local syntax checks or static verification are sufficient.
 
 ---
 
-# Interruption / Barge-In Design
+## Backend and Database Integration
 
-The final voice agent is intended to support conversational interruption.
-
-Target behavior:
-
-```text
-AI is speaking
-      ↓
-User starts speaking
-      ↓
-STT detects user speech
-      ↓
-Current TTS playback stops
-      ↓
-New transcript is processed
-      ↓
-LLM generates new response
-      ↓
-TTS generates new speech
-      ↓
-New response is played
-```
-
-The complete interruption and session orchestration logic is not yet finalized in the current repository.
-
----
-
-# Target End-to-End Voice Flow
-
-The final intended architecture is:
-
-```text
-User Speech
-     │
-     ▼
-  LiveKit
-     │
-     ▼
-Deepgram STT
-     │
-     ▼
- Transcript
-     │
-     ▼
-    LLM
-     │
-     ▼
-AI Response Text
-     │
-     ▼
-TTSProvider
-     │
-     ▼
- ElevenLabs
-     │
-     ▼
-Streaming PCM16
-     │
-     ▼
-  LiveKit
-     │
-     ▼
-   Caller
-```
-
----
-
-# Separation of Responsibilities
-
-## STT
-
-Responsible for:
-
-- Receiving audio
-- Streaming audio to the STT provider
-- Speech recognition
-- Interim results
-- Final results
-
-## LLM
-
-Responsible for:
-
-- Receiving transcript text
-- Generating AI responses
-- Streaming response text when supported
-
-## TTS
-
-Responsible for:
-
-- Receiving AI-generated text
-- Converting text to speech
-- Streaming generated audio
-- Providing a consistent audio contract
-
-## LiveKit
-
-Responsible for:
-
-- Real-time voice transport
-- Audio publishing
-- Audio subscription
-- Audio track management
-
-## Telephony
-
-Responsible for:
-
-- Connecting external phone callers
-- SIP / telephony transport
-- Connecting phone calls to the voice pipeline
-
----
-
-# Backend and Database Integration
-
-The larger Agni AI system will also include backend and database components.
-
-These may include:
+The larger Agni AI system is expected to include:
 
 - FastAPI application modules
 - PostgreSQL
 - SQLAlchemy
 - Alembic
-- Database models
-- Authentication / application services
-- Call and session management
+- database models
+- authentication / application services
+- call and session management
 
-These components are expected to be integrated with the voice layer as the team combines the individual modules.
-
-When integrating them, dependency versions and existing voice components should be checked first to avoid breaking the working STT/TTS implementation.
+These modules should be integrated without replacing already working voice components unless compatibility has been verified.
 
 ---
 
-# Documentation
+## Next Steps
 
-Additional project documentation is available in the `docs/` directory.
+The next development phase is no longer basic LLM integration.
 
-Current documents:
+Current next steps are:
 
-- [`docs/Agni_AI_Voice_Architecture_Notes.docx`](docs/Agni_AI_Voice_Architecture_Notes.docx)
-- [`docs/TTS_PROVIDER_INTERFACE.md`](docs/TTS_PROVIDER_INTERFACE.md)
-
----
-
-# Development Principles
-
-## Modularity
-
-Each component should have a clear responsibility.
-
-## Provider Independence
-
-The application should depend on provider interfaces instead of vendor-specific implementations whenever practical.
-
-## Streaming First
-
-Audio and text should be processed incrementally whenever the provider supports streaming.
-
-## Clear Audio Contracts
-
-Audio format, sample rate, channel count, and encoding should be explicit between components.
-
-## Independent Testing
-
-Providers and transport components should be testable independently before full end-to-end integration.
-
-## Integration Safety
-
-Existing working components should not be replaced without checking compatibility, dependencies, and team ownership.
+1. Diagnose occasional integrated playback repetition when required.
+2. Add true barge-in / interruption handling.
+3. Add conversation and session context.
+4. Integrate backend and database modules.
+5. Integrate Exotel / SIP telephony.
+6. Add production error handling and retries.
+7. Add call/session tracing and observability.
+8. Optimize latency after correctness is stable.
 
 ---
 
-# Git Workflow
+## Current Milestone
 
-From the project root:
-
-```powershell
-cd C:\Users\91940\Projects\agni-ai
-```
-
-Check the repository:
-
-```powershell
-git status
-```
-
-Review changes:
-
-```powershell
-git diff
-```
-
-Stage changes:
-
-```powershell
-git add .
-```
-
-Commit:
-
-```powershell
-git commit -m "Add README documentation"
-```
-
-Push:
-
-```powershell
-git push origin main
-```
-
-Before committing, always verify that `.env`, `.env.local`, and other sensitive files are not being committed.
-
----
-
-# Verified TTS POC Flow
-
-The current TTS POC has successfully validated:
+The repository now contains a verified local end-to-end Agni AI voice POC:
 
 ```text
-Text
- ↓
-ElevenLabs TTS Provider
- ↓
-Streaming PCM16 Audio
- ↓
-TTSAudioChunk
- ↓
-LiveKitAudioOutput
- ↓
-LiveKit AudioSource
- ↓
-LiveKit LocalAudioTrack
- ↓
-LiveKit Room
- ↓
-TTS Listener
- ↓
-Laptop Speaker
-```
-
-The publisher can also accept custom text from the command line.
-
----
-
-# Verified STT POC Flow
-
-The current STT POC has validated:
-
-```text
-Microphone
- ↓
 LiveKit
- ↓
-AudioFrame
- ↓
-Audio Conversion / Resampling
- ↓
-Deepgram Streaming STT
- ↓
-Interim Transcript
- ↓
-Final Transcript
-```
-
----
-
-# Next Integration Step
-
-The next major integration is:
-
-```text
-STT
- ↓
-LLM
- ↓
-TTS
- ↓
+   ↓
+Deepgram STT
+   ↓
+OpenAI LLM
+   ↓
+ElevenLabs TTS
+   ↓
 LiveKit
 ```
 
-The goal is to connect the currently working streaming STT and TTS components through the LLM.
-
-The resulting flow will be:
-
-```text
-User Speech
-     ↓
-   LiveKit
-     ↓
- Deepgram STT
-     ↓
- Transcript
-     ↓
-     LLM
-     ↓
-AI Response
-     ↓
- TTSProvider
-     ↓
- ElevenLabs
-     ↓
-Streaming Audio
-     ↓
-   LiveKit
-     ↓
-    User
-```
-
----
-
-# Current Milestone
-
-The repository currently provides a working foundation for the Agni AI real-time voice pipeline:
-
-- ✅ LiveKit voice transport
-- ✅ Streaming Deepgram STT
-- ✅ TTS provider abstraction
-- ✅ ElevenLabs streaming TTS
-- ✅ LiveKit TTS audio output
-- ✅ Local TTS listener/playback
-- ✅ Standalone STT/TTS POCs
-
-The next stage is to integrate the LLM and complete the conversational voice loop.
-
----
-
-## Agni AI Voice Pipeline
-
-```text
-                AGNI AI
-
-        ┌───────────────────┐
-        │   User / Caller   │
-        └─────────┬─────────┘
-                  │
-                  ▼
-        ┌───────────────────┐
-        │      LiveKit      │
-        └─────────┬─────────┘
-                  │
-                  ▼
-        ┌───────────────────┐
-        │   Deepgram STT    │
-        └─────────┬─────────┘
-                  │
-                  ▼
-        ┌───────────────────┐
-        │        LLM        │
-        └─────────┬─────────┘
-                  │
-                  ▼
-        ┌───────────────────┐
-        │    TTSProvider    │
-        │     ElevenLabs    │
-        └─────────┬─────────┘
-                  │
-                  ▼
-        ┌───────────────────┐
-        │      LiveKit      │
-        └─────────┬─────────┘
-                  │
-                  ▼
-        ┌───────────────────┐
-        │   User / Caller   │
-        └───────────────────┘
-```
+The next phase focuses on **robustness**, **barge-in**, **backend integration**, **telephony**, and **production orchestration**.
 
 ---
 
