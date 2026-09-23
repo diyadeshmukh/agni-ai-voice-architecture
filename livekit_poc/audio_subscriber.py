@@ -27,6 +27,7 @@ Important behavior:
 - Only completed utterances are sent to OpenAI.
 - Deepgram speech_final is used as the fast turn-completion signal.
 - Deepgram utterance_end remains as a fallback.
+- OpenAI text can be forwarded to TTS while the LLM is still generating.
 - While AI is generating/speaking, microphone audio is replaced
   with silence before being sent to STT.
 - Response latency is measured without making extra API calls.
@@ -104,6 +105,7 @@ TTS_CHANNELS = 1
 # ---------------------------------------------------------------------------
 
 def create_access_token() -> str:
+
     api_key = os.getenv(
         "LIVEKIT_API_KEY"
     )
@@ -113,6 +115,7 @@ def create_access_token() -> str:
     )
 
     if not api_key or not api_secret:
+
         raise RuntimeError(
             "LIVEKIT_API_KEY or LIVEKIT_API_SECRET "
             "is missing from .env.local"
@@ -181,6 +184,7 @@ def convert_audio_frame_to_stt_format(
     # ---------------------------------------------------------------
 
     if input_channels > 1:
+
         samples = samples.reshape(
             -1,
             input_channels,
@@ -206,6 +210,7 @@ def convert_audio_frame_to_stt_format(
     # ---------------------------------------------------------------
 
     if input_sample_rate != STT_SAMPLE_RATE:
+
         samples_float = samples.astype(
             np.float32
         )
@@ -247,21 +252,36 @@ async def process_ai_responses(
     """
     Process completed utterances sequentially.
 
-    Timing begins when STT declares that the user's
-    turn is ready for processing.
+    Optimized flow:
+
+        completed utterance
+                ↓
+        OpenAI streaming text
+                ↓
+        asyncio text queue
+                ↓
+        ElevenLabs streaming-text TTS
+                ↓
+        LiveKit audio
+
+    OpenAI and ElevenLabs can therefore work concurrently.
 
     Only one OpenAI request is made for each completed
     user utterance.
     """
 
     while True:
+
         (
             transcript,
             utterance_ready_at,
             last_final_at,
         ) = await response_queue.get()
 
+        llm_task: asyncio.Task | None = None
+
         try:
+
             transcript = transcript.strip()
 
             if not transcript:
@@ -283,13 +303,14 @@ async def process_ai_responses(
             print(transcript)
             print()
 
-            # -------------------------------------------------------
-            # LLM
-            # -------------------------------------------------------
-
             print(
-                "Generating AI response..."
+                "Generating AI response "
+                "and streaming speech..."
             )
+
+            # -------------------------------------------------------
+            # LLM -> TTS streaming bridge
+            # -------------------------------------------------------
 
             llm_started_at = (
                 time.perf_counter()
@@ -299,53 +320,95 @@ async def process_ai_responses(
                 float | None
             ) = None
 
+            llm_completed_at: (
+                float | None
+            ) = None
+
             response_chunks: list[str] = []
 
-            # Use the provider's existing streaming method.
+            # OpenAI producer writes text chunks here.
             #
-            # This is still ONE OpenAI request.
-            # We collect the chunks so ElevenLabs receives the
-            # full response once.
-            async for text_chunk in (
-                llm_provider.stream_response(
-                    transcript
-                )
-            ):
-                if first_llm_chunk_at is None:
-                    first_llm_chunk_at = (
+            # ElevenLabs consumes the same chunks while
+            # OpenAI is still generating.
+            text_queue: asyncio.Queue[
+                str | None
+            ] = asyncio.Queue()
+
+            # -------------------------------------------------------
+            # OpenAI producer
+            # -------------------------------------------------------
+
+            async def produce_llm_text() -> None:
+
+                nonlocal first_llm_chunk_at
+                nonlocal llm_completed_at
+
+                try:
+
+                    async for text_chunk in (
+                        llm_provider.stream_response(
+                            transcript
+                        )
+                    ):
+
+                        if not text_chunk:
+                            continue
+
+                        if first_llm_chunk_at is None:
+
+                            first_llm_chunk_at = (
+                                time.perf_counter()
+                            )
+
+                        response_chunks.append(
+                            text_chunk
+                        )
+
+                        await text_queue.put(
+                            text_chunk
+                        )
+
+                finally:
+
+                    llm_completed_at = (
                         time.perf_counter()
                     )
 
-                response_chunks.append(
-                    text_chunk
-                )
-
-            llm_completed_at = (
-                time.perf_counter()
-            )
-
-            response_text = "".join(
-                response_chunks
-            ).strip()
-
-            if not response_text:
-                print(
-                    "LLM returned an empty response."
-                )
-                continue
-
-            print()
-            print("Agni AI:")
-            print(response_text)
-            print()
+                    # None tells the TTS-side iterator
+                    # that OpenAI has finished.
+                    await text_queue.put(
+                        None
+                    )
 
             # -------------------------------------------------------
-            # TTS
+            # Queue -> TTS async text stream
             # -------------------------------------------------------
 
-            print(
-                "Generating and streaming speech..."
+            async def llm_text_stream():
+
+                while True:
+
+                    item = await text_queue.get()
+
+                    try:
+
+                        if item is None:
+                            return
+
+                        yield item
+
+                    finally:
+
+                        text_queue.task_done()
+
+            # Start OpenAI generation.
+            llm_task = asyncio.create_task(
+                produce_llm_text()
             )
+
+            # -------------------------------------------------------
+            # Streaming TTS
+            # -------------------------------------------------------
 
             tts_started_at = (
                 time.perf_counter()
@@ -358,12 +421,17 @@ async def process_ai_responses(
             chunk_count = 0
             total_audio_bytes = 0
 
+            # synthesize_streaming_text() receives OpenAI chunks
+            # while OpenAI is still producing the response.
             async for audio_chunk in (
-                tts_provider.synthesize(
-                    response_text
+                tts_provider
+                .synthesize_streaming_text(
+                    llm_text_stream()
                 )
             ):
+
                 if first_tts_chunk_at is None:
+
                     first_tts_chunk_at = (
                         time.perf_counter()
                     )
@@ -382,8 +450,41 @@ async def process_ai_responses(
                 time.perf_counter()
             )
 
-            # Keep microphone suppression enabled until
-            # every generated audio frame has played out.
+            # -------------------------------------------------------
+            # Make sure OpenAI completed successfully
+            # -------------------------------------------------------
+
+            await llm_task
+
+            llm_task = None
+
+            if llm_completed_at is None:
+
+                llm_completed_at = (
+                    time.perf_counter()
+                )
+
+            response_text = "".join(
+                response_chunks
+            ).strip()
+
+            if not response_text:
+
+                print(
+                    "LLM returned an empty response."
+                )
+
+                continue
+
+            print()
+            print("Agni AI:")
+            print(response_text)
+            print()
+
+            # -------------------------------------------------------
+            # Wait until LiveKit finishes playing all generated audio
+            # -------------------------------------------------------
+
             await (
                 audio_output
                 .audio_source
@@ -395,7 +496,8 @@ async def process_ai_responses(
             )
 
             print(
-                f"TTS chunks: {chunk_count}"
+                f"TTS chunks: "
+                f"{chunk_count}"
             )
 
             print(
@@ -416,7 +518,12 @@ async def process_ai_responses(
             print("RESPONSE LATENCY")
             print("-" * 72)
 
+            # -------------------------------------------------------
+            # STT -> turn ready
+            # -------------------------------------------------------
+
             if last_final_at is not None:
+
                 final_to_turn_ready = (
                     utterance_ready_at
                     - last_final_at
@@ -428,6 +535,10 @@ async def process_ai_responses(
                     f"{final_to_turn_ready:.3f} s"
                 )
 
+            # -------------------------------------------------------
+            # Queue delay
+            # -------------------------------------------------------
+
             queue_delay = (
                 worker_started_at
                 - utterance_ready_at
@@ -438,7 +549,12 @@ async def process_ai_responses(
                 f"{queue_delay:.3f} s"
             )
 
+            # -------------------------------------------------------
+            # LLM latency
+            # -------------------------------------------------------
+
             if first_llm_chunk_at is not None:
+
                 llm_first_chunk = (
                     first_llm_chunk_at
                     - llm_started_at
@@ -459,16 +575,11 @@ async def process_ai_responses(
                 f"{llm_total:.3f} s"
             )
 
-            if first_tts_chunk_at is not None:
-                tts_first_chunk = (
-                    first_tts_chunk_at
-                    - tts_started_at
-                )
+            # -------------------------------------------------------
+            # First AI audio
+            # -------------------------------------------------------
 
-                print(
-                    "ElevenLabs first audio chunk: "
-                    f"{tts_first_chunk:.3f} s"
-                )
+            if first_tts_chunk_at is not None:
 
                 response_start_latency = (
                     first_tts_chunk_at
@@ -481,15 +592,67 @@ async def process_ai_responses(
                     f"{response_start_latency:.3f} s"
                 )
 
+                # This shows how much time passed between
+                # receiving the first OpenAI text and receiving
+                # the first ElevenLabs audio.
+                if first_llm_chunk_at is not None:
+
+                    llm_to_audio = (
+                        first_tts_chunk_at
+                        - first_llm_chunk_at
+                    )
+
+                    print(
+                        "First LLM text -> "
+                        "first AI audio: "
+                        f"{llm_to_audio:.3f} s"
+                    )
+
+                # Most important Optimization 2 check:
+                #
+                # If first audio arrived before OpenAI completed,
+                # LLM and TTS successfully overlapped.
+                if (
+                    llm_completed_at is not None
+                    and first_tts_chunk_at
+                    < llm_completed_at
+                ):
+
+                    overlap = (
+                        llm_completed_at
+                        - first_tts_chunk_at
+                    )
+
+                    print(
+                        "TTS started before LLM "
+                        "completed by: "
+                        f"{overlap:.3f} s"
+                    )
+
+                else:
+
+                    print(
+                        "TTS started after LLM "
+                        "completed."
+                    )
+
+            # -------------------------------------------------------
+            # TTS session duration
+            # -------------------------------------------------------
+
             tts_generation_time = (
                 tts_generation_completed_at
                 - tts_started_at
             )
 
             print(
-                "TTS generation/streaming: "
+                "TTS streaming session: "
                 f"{tts_generation_time:.3f} s"
             )
+
+            # -------------------------------------------------------
+            # Total turn response duration
+            # -------------------------------------------------------
 
             total_response_time = (
                 playback_completed_at
@@ -505,16 +668,52 @@ async def process_ai_responses(
             print("-" * 72)
             print()
 
+        # -----------------------------------------------------------
+        # Cancellation
+        # -----------------------------------------------------------
+
         except asyncio.CancelledError:
+
+            if (
+                llm_task is not None
+                and not llm_task.done()
+            ):
+
+                llm_task.cancel()
+
+                await asyncio.gather(
+                    llm_task,
+                    return_exceptions=True,
+                )
+
             raise
 
+        # -----------------------------------------------------------
+        # Pipeline error
+        # -----------------------------------------------------------
+
         except Exception as exc:
+
+            if (
+                llm_task is not None
+                and not llm_task.done()
+            ):
+
+                llm_task.cancel()
+
+                await asyncio.gather(
+                    llm_task,
+                    return_exceptions=True,
+                )
+
             print()
             print(
-                f"[VOICE PIPELINE ERROR] {exc}"
+                f"[VOICE PIPELINE ERROR] "
+                f"{exc}"
             )
 
         finally:
+
             ai_speaking.clear()
 
             response_queue.task_done()
@@ -541,11 +740,13 @@ async def receive_stt_events(
     Final transcript pieces are accumulated.
 
     Fast path:
+
         speech_final=True
         -> completed utterance
         -> OpenAI
 
     Fallback:
+
         utterance_end
         -> completed utterance
         -> OpenAI
@@ -583,7 +784,9 @@ async def receive_stt_events(
         final_transcript_parts.clear()
 
         if not final_utterance:
+
             last_final_at = None
+
             return
 
         print()
@@ -605,6 +808,7 @@ async def receive_stt_events(
         )
 
         last_final_at = None
+
         turn_dispatched = True
 
     # ------------------------------------------------------------------
@@ -612,6 +816,7 @@ async def receive_stt_events(
     # ------------------------------------------------------------------
 
     while True:
+
         event = await stt_adapter.receive_event()
 
         event_type = event.get(
@@ -624,17 +829,22 @@ async def receive_stt_events(
         # -----------------------------------------------------------
 
         if ai_speaking.is_set():
+
             if event_type in (
                 "utterance_end",
                 "silence",
             ):
+
                 final_transcript_parts.clear()
+
                 last_final_at = None
 
                 if event_type == "utterance_end":
+
                     turn_dispatched = False
 
             if event_type == "error":
+
                 print(
                     f"[STT ERROR] "
                     f"{event.get('message', '')}"
@@ -647,6 +857,7 @@ async def receive_stt_events(
         # -----------------------------------------------------------
 
         if event_type == "partial":
+
             transcript = event.get(
                 "transcript",
                 "",
@@ -667,6 +878,7 @@ async def receive_stt_events(
         # -----------------------------------------------------------
 
         elif event_type == "final":
+
             transcript = event.get(
                 "transcript",
                 "",
@@ -697,6 +909,7 @@ async def receive_stt_events(
             )
 
             if transcript:
+
                 final_transcript_parts.append(
                     transcript
                 )
@@ -717,6 +930,7 @@ async def receive_stt_events(
                 and final_transcript_parts
                 and not turn_dispatched
             ):
+
                 print(
                     "[VAD] Speech endpoint detected"
                 )
@@ -730,6 +944,7 @@ async def receive_stt_events(
         # -----------------------------------------------------------
 
         elif event_type == "speech_started":
+
             turn_dispatched = False
 
             print(
@@ -741,6 +956,7 @@ async def receive_stt_events(
         # -----------------------------------------------------------
 
         elif event_type == "utterance_end":
+
             print(
                 "[VAD] Utterance ended"
             )
@@ -751,8 +967,11 @@ async def receive_stt_events(
             # -------------------------------------------------------
 
             if turn_dispatched:
+
                 final_transcript_parts.clear()
+
                 last_final_at = None
+
                 turn_dispatched = False
 
                 print(
@@ -770,11 +989,13 @@ async def receive_stt_events(
             # -------------------------------------------------------
 
             if final_transcript_parts:
+
                 await dispatch_utterance(
                     "utterance_end fallback"
                 )
 
             else:
+
                 last_final_at = None
 
         # -----------------------------------------------------------
@@ -782,8 +1003,11 @@ async def receive_stt_events(
         # -----------------------------------------------------------
 
         elif event_type == "silence":
+
             final_transcript_parts.clear()
+
             last_final_at = None
+
             turn_dispatched = False
 
             print(
@@ -795,6 +1019,7 @@ async def receive_stt_events(
         # -----------------------------------------------------------
 
         elif event_type == "incomplete_speech":
+
             transcript = event.get(
                 "transcript",
                 "",
@@ -810,12 +1035,14 @@ async def receive_stt_events(
         # -----------------------------------------------------------
 
         elif event_type == "error":
+
             print(
                 f"[STT ERROR] "
                 f"{event.get('message', '')}"
             )
 
         else:
+
             print(
                 f"[STT EVENT] {event}"
             )
@@ -842,6 +1069,7 @@ async def consume_audio_track(
     """
 
     if track.kind != rtc.TrackKind.KIND_AUDIO:
+
         return
 
     print()
@@ -855,11 +1083,15 @@ async def consume_audio_track(
     )
 
     frame_count = 0
+
     total_audio_bytes = 0
+
     suppressed_frames = 0
 
     try:
+
         async for audio_frame_event in audio_stream:
+
             audio_frame = (
                 audio_frame_event.frame
             )
@@ -873,12 +1105,15 @@ async def consume_audio_track(
             )
 
             if not stt_audio:
+
                 continue
 
             if ai_speaking.is_set():
+
                 suppressed_frames += 1
 
-                # Same PCM frame length, but silence.
+                # Same PCM frame length,
+                # but replace audio with silence.
                 stt_audio = bytes(
                     len(stt_audio)
                 )
@@ -892,19 +1127,23 @@ async def consume_audio_track(
             )
 
             if frame_count % 100 == 0:
+
                 print(
                     f"Streaming audio frames: "
                     f"{frame_count}"
                 )
 
     finally:
+
         await audio_stream.aclose()
 
         print()
+
         print(
             f"Audio stream ended. "
             f"Frames received: {frame_count}. "
-            f"Suppressed frames: {suppressed_frames}. "
+            f"Suppressed frames: "
+            f"{suppressed_frames}. "
             f"STT audio bytes sent: "
             f"{total_audio_bytes}"
         )
@@ -929,6 +1168,7 @@ async def main() -> None:
     )
 
     if not livekit_url:
+
         raise RuntimeError(
             "LIVEKIT_URL is missing from "
             ".env.local"
@@ -951,7 +1191,8 @@ async def main() -> None:
     llm_provider = OpenAILLMProvider()
 
     print(
-        f"LLM ready: {llm_provider.model}"
+        f"LLM ready: "
+        f"{llm_provider.model}"
     )
 
     print(
@@ -996,36 +1237,61 @@ async def main() -> None:
         ]
     ) = loop.create_future()
 
-    stt_adapter: STTStreamAdapter | None = None
+    stt_adapter: (
+        STTStreamAdapter
+        | None
+    ) = None
 
-    audio_task: asyncio.Task | None = None
-    stt_event_task: asyncio.Task | None = None
-    response_task: asyncio.Task | None = None
+    audio_task: (
+        asyncio.Task
+        | None
+    ) = None
+
+    stt_event_task: (
+        asyncio.Task
+        | None
+    ) = None
+
+    response_task: (
+        asyncio.Task
+        | None
+    ) = None
 
     # ---------------------------------------------------------------
     # LiveKit track callback
     # ---------------------------------------------------------------
 
-    @room.on("track_subscribed")
+    @room.on(
+        "track_subscribed"
+    )
     def on_track_subscribed(
         track: rtc.Track,
         publication: rtc.RemoteTrackPublication,
         participant: rtc.RemoteParticipant,
     ) -> None:
-        if track.kind != rtc.TrackKind.KIND_AUDIO:
+
+        if (
+            track.kind
+            != rtc.TrackKind.KIND_AUDIO
+        ):
+
             return
 
         if publication.name == "voice-output":
+
             return
 
         if microphone_track_future.done():
+
             return
 
         print()
+
         print(
             f"Subscribed to track "
             f"'{publication.name}' "
-            f"from '{participant.identity}'"
+            f"from "
+            f"'{participant.identity}'"
         )
 
         microphone_track_future.set_result(
@@ -1036,6 +1302,7 @@ async def main() -> None:
         )
 
     try:
+
         # -----------------------------------------------------------
         # Connect LiveKit
         # -----------------------------------------------------------
@@ -1076,6 +1343,7 @@ async def main() -> None:
         )
 
         print()
+
         print(
             "Waiting for microphone track..."
         )
@@ -1143,12 +1411,14 @@ async def main() -> None:
         )
 
         print()
+
         print(
             f"Streaming STT endpoint: "
             f"{STT_STREAM_ENDPOINT}"
         )
 
         print()
+
         print(
             "Voice pipeline ready."
         )
@@ -1158,15 +1428,24 @@ async def main() -> None:
             "sent to OpenAI."
         )
 
+        print(
+            "OpenAI text is streamed "
+            "toward ElevenLabs in real time."
+        )
+
         await asyncio.Event().wait()
 
     finally:
+
         print()
+
         print(
-            "Stopping Agni AI voice pipeline..."
+            "Stopping Agni AI "
+            "voice pipeline..."
         )
 
         if audio_task is not None:
+
             audio_task.cancel()
 
             await asyncio.gather(
@@ -1175,6 +1454,7 @@ async def main() -> None:
             )
 
         if stt_event_task is not None:
+
             stt_event_task.cancel()
 
             await asyncio.gather(
@@ -1183,6 +1463,7 @@ async def main() -> None:
             )
 
         if response_task is not None:
+
             response_task.cancel()
 
             await asyncio.gather(
@@ -1191,6 +1472,7 @@ async def main() -> None:
             )
 
         if stt_adapter is not None:
+
             await stt_adapter.close()
 
         await audio_output.close()
@@ -1203,20 +1485,27 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+
     try:
+
         asyncio.run(
             main()
         )
 
     except KeyboardInterrupt:
+
         print()
+
         print(
             "Agni AI voice pipeline "
             "stopped by user."
         )
 
     except Exception as exc:
+
         print()
+
         print(
-            f"Voice pipeline error: {exc}"
+            f"Voice pipeline error: "
+            f"{exc}"
         )
