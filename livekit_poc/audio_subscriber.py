@@ -25,6 +25,8 @@ Important behavior:
 
 - Deepgram connects only after a microphone track exists.
 - Only completed utterances are sent to OpenAI.
+- Deepgram speech_final is used as the fast turn-completion signal.
+- Deepgram utterance_end remains as a fallback.
 - While AI is generating/speaking, microphone audio is replaced
   with silence before being sent to STT.
 - Response latency is measured without making extra API calls.
@@ -246,7 +248,7 @@ async def process_ai_responses(
     Process completed utterances sequentially.
 
     Timing begins when STT declares that the user's
-    utterance has ended.
+    turn is ready for processing.
 
     Only one OpenAI request is made for each completed
     user utterance.
@@ -415,15 +417,15 @@ async def process_ai_responses(
             print("-" * 72)
 
             if last_final_at is not None:
-                final_to_utterance = (
+                final_to_turn_ready = (
                     utterance_ready_at
                     - last_final_at
                 )
 
                 print(
                     "Final transcript -> "
-                    "utterance end: "
-                    f"{final_to_utterance:.3f} s"
+                    "turn ready: "
+                    f"{final_to_turn_ready:.3f} s"
                 )
 
             queue_delay = (
@@ -474,7 +476,7 @@ async def process_ai_responses(
                 )
 
                 print(
-                    "Utterance end -> "
+                    "Turn ready -> "
                     "first AI audio: "
                     f"{response_start_latency:.3f} s"
                 )
@@ -495,7 +497,7 @@ async def process_ai_responses(
             )
 
             print(
-                "Utterance end -> "
+                "Turn ready -> "
                 "playback complete: "
                 f"{total_response_time:.3f} s"
             )
@@ -536,15 +538,78 @@ async def receive_stt_events(
     """
     Receive STT transcript and VAD events.
 
-    Final transcript pieces are collected until Deepgram
-    sends utterance_end.
+    Final transcript pieces are accumulated.
 
-    Only the completed utterance is queued for OpenAI.
+    Fast path:
+        speech_final=True
+        -> completed utterance
+        -> OpenAI
+
+    Fallback:
+        utterance_end
+        -> completed utterance
+        -> OpenAI
+
+    Interim transcripts never trigger OpenAI.
     """
 
     final_transcript_parts: list[str] = []
 
     last_final_at: float | None = None
+
+    # Prevent utterance_end from sending the same user
+    # turn to OpenAI after speech_final already dispatched it.
+    turn_dispatched = False
+
+    # ------------------------------------------------------------------
+    # Completed utterance dispatcher
+    # ------------------------------------------------------------------
+
+    async def dispatch_utterance(
+        trigger: str,
+    ) -> None:
+
+        nonlocal last_final_at
+        nonlocal turn_dispatched
+
+        utterance_ready_at = (
+            time.perf_counter()
+        )
+
+        final_utterance = " ".join(
+            final_transcript_parts
+        ).strip()
+
+        final_transcript_parts.clear()
+
+        if not final_utterance:
+            last_final_at = None
+            return
+
+        print()
+        print(
+            f"[UTTERANCE - {trigger}] "
+            f"{final_utterance}"
+        )
+
+        # Suppress microphone immediately before
+        # placing the utterance into the AI queue.
+        ai_speaking.set()
+
+        await response_queue.put(
+            (
+                final_utterance,
+                utterance_ready_at,
+                last_final_at,
+            )
+        )
+
+        last_final_at = None
+        turn_dispatched = True
+
+    # ------------------------------------------------------------------
+    # STT event loop
+    # ------------------------------------------------------------------
 
     while True:
         event = await stt_adapter.receive_event()
@@ -565,6 +630,9 @@ async def receive_stt_events(
             ):
                 final_transcript_parts.clear()
                 last_final_at = None
+
+                if event_type == "utterance_end":
+                    turn_dispatched = False
 
             if event_type == "error":
                 print(
@@ -609,9 +677,23 @@ async def receive_stt_events(
                 0,
             )
 
+            speech_final = bool(
+                event.get(
+                    "speech_final",
+                    False,
+                )
+            )
+
+            speech_final_label = (
+                " [SPEECH FINAL]"
+                if speech_final
+                else ""
+            )
+
             print(
                 f"[FINAL] {transcript}"
                 f"  ({latency:.2f} ms)"
+                f"{speech_final_label}"
             )
 
             if transcript:
@@ -623,11 +705,33 @@ async def receive_stt_events(
                     time.perf_counter()
                 )
 
+            # -------------------------------------------------------
+            # FAST PATH
+            #
+            # Deepgram endpointing has detected that the
+            # user has stopped speaking.
+            # -------------------------------------------------------
+
+            if (
+                speech_final
+                and final_transcript_parts
+                and not turn_dispatched
+            ):
+                print(
+                    "[VAD] Speech endpoint detected"
+                )
+
+                await dispatch_utterance(
+                    "speech_final"
+                )
+
         # -----------------------------------------------------------
         # Speech started
         # -----------------------------------------------------------
 
         elif event_type == "speech_started":
+            turn_dispatched = False
+
             print(
                 "[VAD] Speech started"
             )
@@ -637,42 +741,41 @@ async def receive_stt_events(
         # -----------------------------------------------------------
 
         elif event_type == "utterance_end":
-            utterance_ready_at = (
-                time.perf_counter()
-            )
-
             print(
                 "[VAD] Utterance ended"
             )
 
-            final_utterance = " ".join(
-                final_transcript_parts
-            ).strip()
+            # -------------------------------------------------------
+            # speech_final already dispatched this turn.
+            # Do not send it to OpenAI twice.
+            # -------------------------------------------------------
 
-            final_transcript_parts.clear()
-
-            if not final_utterance:
+            if turn_dispatched:
+                final_transcript_parts.clear()
                 last_final_at = None
+                turn_dispatched = False
+
+                print(
+                    "[VAD] Utterance already "
+                    "processed via speech_final"
+                )
+
                 continue
 
-            print()
-            print(
-                f"[UTTERANCE] "
-                f"{final_utterance}"
-            )
+            # -------------------------------------------------------
+            # FALLBACK
+            #
+            # If speech_final was not received, retain the
+            # previous utterance_end behavior.
+            # -------------------------------------------------------
 
-            # Suppress microphone immediately.
-            ai_speaking.set()
-
-            await response_queue.put(
-                (
-                    final_utterance,
-                    utterance_ready_at,
-                    last_final_at,
+            if final_transcript_parts:
+                await dispatch_utterance(
+                    "utterance_end fallback"
                 )
-            )
 
-            last_final_at = None
+            else:
+                last_final_at = None
 
         # -----------------------------------------------------------
         # Silence
@@ -681,6 +784,7 @@ async def receive_stt_events(
         elif event_type == "silence":
             final_transcript_parts.clear()
             last_final_at = None
+            turn_dispatched = False
 
             print(
                 "[VAD] Silence detected"
