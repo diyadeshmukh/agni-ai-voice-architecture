@@ -10,14 +10,37 @@ Expected incoming audio:
     - mono
     - binary WebSocket messages
 
+Supported language query modes:
+
+    multi
+        English + Hinglish / English-Hindi code-switching
+
+    hi
+        Hindi
+
+    mr
+        Marathi
+
+Examples:
+
+    /api/v1/stt/stream?language=multi
+
+    /api/v1/stt/stream?language=hi
+
+    /api/v1/stt/stream?language=mr
+
+If no language query parameter is supplied,
+DeepgramSTTService uses DEEPGRAM_STT_LANGUAGE
+or defaults to "multi".
+
 The endpoint sends JSON events back to the client:
 
     {"type": "partial", ...}
     {"type": "final", ...}
-    {"type": "speech_started"}
-    {"type": "utterance_end"}
-    {"type": "silence"}
-    {"type": "incomplete_speech"}
+    {"type": "speech_started", ...}
+    {"type": "utterance_end", ...}
+    {"type": "silence", ...}
+    {"type": "incomplete_speech", ...}
     {"type": "error", ...}
 """
 
@@ -25,15 +48,32 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
 from typing import AsyncIterator
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    WebSocket,
+    WebSocketDisconnect,
+)
 
-from app.services.stt_service import DeepgramSTTService
+from app.services.stt_service import (
+    DeepgramSTTService,
+)
 
 
-logger = logging.getLogger("stt_api")
+# ===========================================================================
+# Logging
+# ===========================================================================
 
+logger = logging.getLogger(
+    "stt_api"
+)
+
+
+# ===========================================================================
+# Router
+# ===========================================================================
 
 router = APIRouter(
     prefix="/stt",
@@ -41,45 +81,182 @@ router = APIRouter(
 )
 
 
-# Sentinel object used to tell the audio generator that the
-# WebSocket client has stopped sending audio.
+# ===========================================================================
+# Audio queue sentinel
+# ===========================================================================
+
 _SENTINEL = object()
 
 
-@router.websocket("/stream")
+# ===========================================================================
+# Supported language modes
+#
+# This is the block you asked about.
+#
+# It belongs here, directly after _SENTINEL.
+# ===========================================================================
+
+SUPPORTED_LANGUAGE_MODES = {
+    "multi",
+    "hi",
+    "mr",
+}
+
+
+# ===========================================================================
+# Streaming STT WebSocket
+# ===========================================================================
+
+@router.websocket(
+    "/stream"
+)
 async def stt_stream(
     websocket: WebSocket,
 ) -> None:
     """
     Stream audio from a WebSocket client into Deepgram STT.
 
-    The client sends raw PCM16 audio as binary messages.
-
-    Audio format expected by this endpoint:
+    Expected audio:
 
         Sample rate : 16 kHz
         Channels    : 1
         Encoding    : linear16 / PCM16
+
+    Optional query parameter:
+
+        ?language=multi
+
+        ?language=hi
+
+        ?language=mr
     """
 
+    # -----------------------------------------------------------------------
+    # Read optional language from WebSocket query string
+    # -----------------------------------------------------------------------
+
+    requested_language = (
+        websocket.query_params.get(
+            "language"
+        )
+    )
+
+    if requested_language is not None:
+
+        requested_language = (
+            requested_language
+            .strip()
+            .lower()
+        )
+
+        if not requested_language:
+            requested_language = None
+
+    # -----------------------------------------------------------------------
+    # Accept WebSocket
+    # -----------------------------------------------------------------------
+
     await websocket.accept()
+
+    client_connected = True
+
+    # -----------------------------------------------------------------------
+    # Validate requested language
+    # -----------------------------------------------------------------------
+
+    if (
+        requested_language is not None
+        and requested_language
+        not in SUPPORTED_LANGUAGE_MODES
+    ):
+
+        supported = ", ".join(
+            sorted(
+                SUPPORTED_LANGUAGE_MODES
+            )
+        )
+
+        logger.warning(
+            "Unsupported STT language "
+            "mode requested: %s",
+            requested_language,
+        )
+
+        try:
+
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": (
+                        "Unsupported STT language "
+                        f"mode: {requested_language}. "
+                        f"Supported modes: {supported}."
+                    ),
+                }
+            )
+
+        except Exception:
+
+            pass
+
+        try:
+
+            await websocket.close(
+                code=1008
+            )
+
+        except Exception:
+
+            pass
+
+        return
+
+    # -----------------------------------------------------------------------
+    # Connection logging
+    # -----------------------------------------------------------------------
 
     logger.info(
         "Streaming STT WebSocket connected."
     )
 
-    audio_queue: asyncio.Queue[bytes | object] = (
-        asyncio.Queue()
-    )
+    if requested_language:
 
-    async def audio_generator() -> AsyncIterator[bytes]:
+        logger.info(
+            "Requested STT language mode: %s",
+            requested_language,
+        )
+
+    else:
+
+        logger.info(
+            "No STT language query supplied; "
+            "using configured default."
+        )
+
+    # -----------------------------------------------------------------------
+    # Audio queue
+    # -----------------------------------------------------------------------
+
+    audio_queue: asyncio.Queue[
+        bytes | object
+    ] = asyncio.Queue()
+
+    # -----------------------------------------------------------------------
+    # Audio generator
+    # -----------------------------------------------------------------------
+
+    async def audio_generator(
+    ) -> AsyncIterator[bytes]:
         """
-        Convert queued WebSocket audio messages into an async
-        audio stream for Deepgram.
+        Convert queued WebSocket audio into
+        an asynchronous Deepgram audio stream.
         """
 
         while True:
-            chunk = await audio_queue.get()
+
+            chunk = (
+                await audio_queue.get()
+            )
 
             if chunk is _SENTINEL:
                 return
@@ -89,27 +266,73 @@ async def stt_stream(
 
             yield chunk  # type: ignore[misc]
 
+    # -----------------------------------------------------------------------
+    # Deepgram -> WebSocket callback
+    # -----------------------------------------------------------------------
+
     async def on_transcript(
         payload: dict,
     ) -> None:
         """
-        Send Deepgram transcript/VAD events back to the client.
+        Forward Deepgram transcript and VAD
+        events to the WebSocket client.
         """
 
+        nonlocal client_connected
+
+        if not client_connected:
+            return
+
         try:
+
             await websocket.send_json(
                 payload
             )
 
-        except Exception:
-            logger.exception(
-                "Failed to send STT event to WebSocket client."
+        except WebSocketDisconnect:
+
+            client_connected = False
+
+            logger.info(
+                "STT WebSocket client disconnected "
+                "before event could be sent."
             )
 
+        except RuntimeError:
+
+            client_connected = False
+
+            logger.debug(
+                "STT WebSocket already closed; "
+                "dropping event."
+            )
+
+        except Exception:
+
+            client_connected = False
+
+            logger.debug(
+                "Unable to send STT event because "
+                "the WebSocket client disconnected.",
+                exc_info=True,
+            )
+
+    # -----------------------------------------------------------------------
+    # Deepgram streaming task
+    # -----------------------------------------------------------------------
+
+    stt_task: asyncio.Task | None = None
+
     try:
-        # Create one continuous Deepgram streaming session.
+
         stt = DeepgramSTTService(
-            samplerate=16_000
+            samplerate=16_000,
+            language=requested_language,
+        )
+
+        logger.info(
+            "Deepgram STT language mode: %s",
+            stt.language,
         )
 
         stt_task = asyncio.create_task(
@@ -124,86 +347,129 @@ async def stt_stream(
         )
 
         # ---------------------------------------------------------------
-        # Receive audio continuously from the WebSocket client.
+        # Receive continuous audio from WebSocket client
         # ---------------------------------------------------------------
 
         while True:
+
             try:
+
                 audio_chunk = (
                     await websocket.receive_bytes()
                 )
 
             except WebSocketDisconnect:
+
+                client_connected = False
+
                 logger.info(
-                    "Streaming STT WebSocket disconnected."
+                    "Streaming STT "
+                    "WebSocket disconnected."
                 )
+
                 break
 
             if audio_chunk:
+
                 await audio_queue.put(
                     audio_chunk
                 )
 
+    # -----------------------------------------------------------------------
+    # Configuration errors
+    # -----------------------------------------------------------------------
+
     except RuntimeError as exc:
+
         logger.error(
             "STT configuration error: %s",
             exc,
         )
 
-        try:
-            await websocket.send_json(
-                {
-                    "type": "error",
-                    "message": str(exc),
-                }
-            )
+        if client_connected:
 
-        except Exception:
-            pass
+            try:
+
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": str(
+                            exc
+                        ),
+                    }
+                )
+
+            except Exception:
+
+                client_connected = False
+
+    # -----------------------------------------------------------------------
+    # Unexpected errors
+    # -----------------------------------------------------------------------
 
     except Exception as exc:
+
         logger.exception(
             "Unhandled streaming STT error."
         )
 
-        try:
-            await websocket.send_json(
-                {
-                    "type": "error",
-                    "message": str(exc),
-                }
-            )
+        if client_connected:
 
-        except Exception:
-            pass
+            try:
+
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": str(
+                            exc
+                        ),
+                    }
+                )
+
+            except Exception:
+
+                client_connected = False
+
+    # -----------------------------------------------------------------------
+    # Shutdown
+    # -----------------------------------------------------------------------
 
     finally:
-        # ---------------------------------------------------------------
-        # Tell the audio generator that no more audio will arrive.
-        # ---------------------------------------------------------------
 
+        # Prevent Deepgram trailing events from attempting
+        # to send to a disconnected WebSocket client.
+        client_connected = False
+
+        # Tell audio generator that input has ended.
         await audio_queue.put(
             _SENTINEL
         )
 
-        # ---------------------------------------------------------------
-        # Allow the Deepgram streaming session to finalize and shut down
-        # cleanly.
-        # ---------------------------------------------------------------
+        # Allow Deepgram session to finalize.
+        if stt_task is not None:
 
-        if "stt_task" in locals():
             try:
+
                 await stt_task
 
+            except asyncio.CancelledError:
+
+                pass
+
             except Exception:
+
                 logger.exception(
-                    "Streaming STT task stopped with an error."
+                    "Streaming STT task "
+                    "stopped with an error."
                 )
 
+        # Close WebSocket if necessary.
         try:
+
             await websocket.close()
 
         except Exception:
+
             pass
 
         logger.info(

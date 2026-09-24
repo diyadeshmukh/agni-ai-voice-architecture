@@ -19,6 +19,17 @@ Current Deepgram SDK:
 Current model:
     Nova-3
 
+Language modes used by Agni AI:
+
+    multi
+        English + Hinglish / English-Hindi code-switching
+
+    hi
+        Hindi
+
+    mr
+        Marathi
+
 Expected primary audio format:
     linear16 / PCM16
     16 kHz
@@ -84,7 +95,7 @@ def _log_latency(
     """
     Record streaming response latency.
 
-    This is a response-latency measurement from the most recently
+    This measures response latency from the most recently
     sent audio chunk. It is not total utterance latency.
     """
 
@@ -93,7 +104,11 @@ def _log_latency(
         2,
     )
 
-    event_type = "final" if is_final else "partial"
+    event_type = (
+        "final"
+        if is_final
+        else "partial"
+    )
 
     with open(
         LATENCY_LOG_PATH,
@@ -131,7 +146,9 @@ def _mic_audio_generator(
 
     import sounddevice as sd
 
-    audio_queue: queue.Queue[bytes] = queue.Queue()
+    audio_queue: queue.Queue[bytes] = (
+        queue.Queue()
+    )
 
     def callback(
         indata,
@@ -159,6 +176,7 @@ def _mic_audio_generator(
     )
 
     with stream:
+
         logger.info(
             "Microphone stream started."
         )
@@ -176,7 +194,8 @@ def _file_audio_generator(
     chunk_ms: int = 100,
 ) -> Iterator[bytes]:
     """
-    Read a WAV file and emit small chunks at approximately real-time pace.
+    Read a WAV file and emit audio chunks at approximately
+    real-time pace.
     """
 
     with wave.open(
@@ -184,10 +203,13 @@ def _file_audio_generator(
         "rb",
     ) as wav_file:
 
-        samplerate = wav_file.getframerate()
+        samplerate = (
+            wav_file.getframerate()
+        )
 
         frames_per_chunk = int(
-            samplerate * (chunk_ms / 1000.0)
+            samplerate
+            * (chunk_ms / 1000.0)
         )
 
         data = wav_file.readframes(
@@ -195,6 +217,7 @@ def _file_audio_generator(
         )
 
         while data:
+
             yield data
 
             time.sleep(
@@ -207,14 +230,15 @@ def _file_audio_generator(
 
 
 # ===========================================================================
-# Sync → Async adapter
+# Sync -> Async adapter
 # ===========================================================================
 
 async def _as_async_iter(
     sync_gen: Iterator[bytes],
 ) -> AsyncIterator[bytes]:
     """
-    Convert a blocking synchronous generator into an async iterator.
+    Convert a blocking synchronous generator
+    into an asynchronous iterator.
     """
 
     iterator = iter(
@@ -253,14 +277,21 @@ class DeepgramSTTService:
     """
     Persistent Deepgram streaming STT service.
 
-    Main external integration point:
+    Main integration point:
 
         await stt.stream_audio_chunks(...)
+
+    Language configuration priority:
+
+        1. language passed to constructor
+        2. DEEPGRAM_STT_LANGUAGE environment variable
+        3. "multi"
     """
 
     def __init__(
         self,
         samplerate: int = 16_000,
+        language: str | None = None,
     ) -> None:
 
         self.samplerate = samplerate
@@ -277,6 +308,21 @@ class DeepgramSTTService:
                 "DEEPGRAM_API_KEY is not set. "
                 "Add it to .env.local or the environment."
             )
+
+        self.language = (
+            language
+            or os.getenv(
+                "DEEPGRAM_STT_LANGUAGE",
+                "multi",
+            )
+        ).strip()
+
+        if not self.language:
+            self.language = "multi"
+
+        self.language = (
+            self.language.lower()
+        )
 
     async def _run(
         self,
@@ -295,6 +341,11 @@ class DeepgramSTTService:
             or self.samplerate
         )
 
+        logger.info(
+            "Deepgram STT language mode: %s",
+            self.language,
+        )
+
         # -------------------------------------------------------------------
         # Deepgram client
         # -------------------------------------------------------------------
@@ -305,9 +356,6 @@ class DeepgramSTTService:
 
         # -------------------------------------------------------------------
         # Project terminology
-        #
-        # Keep this list focused on genuine project-specific words/phrases.
-        # Deepgram Nova-3 supports keyterm prompting.
         # -------------------------------------------------------------------
 
         keyterms = [
@@ -326,28 +374,24 @@ class DeepgramSTTService:
 
         async with client.listen.v1.connect(
             model="nova-3",
-            language="en-US",
+            language=self.language,
             encoding=encoding,
             sample_rate=sample_rate,
             channels=channels,
 
-            # Return interim hypotheses while the speaker is talking.
             interim_results=True,
 
-            # Backstop signal for a completed utterance.
+            # Backstop utterance boundary.
             utterance_end_ms="1500",
 
             # Enable VAD events.
             vad_events=True,
 
-            # Slightly less aggressive endpointing than our previous
-            # 300 ms configuration.
+            # Keep our latency-tested endpointing value.
             endpointing=500,
 
-            # Improve transcript formatting.
             smart_format=True,
 
-            # Project-specific terminology.
             keyterm=keyterms,
 
         ) as connection:
@@ -356,31 +400,19 @@ class DeepgramSTTService:
             # Runtime state
             # ---------------------------------------------------------------
 
-            last_audio_sent_ts: float | None = None
+            last_audio_sent_ts: (
+                float | None
+            ) = None
 
             state = {
-                # Whether Deepgram currently considers the speaker to be
-                # inside a speech interval.
                 "in_speech": False,
-
-                # Whether at least one final result was produced since the
-                # most recent utterance boundary.
                 "final_since_boundary": False,
-
-                # Most recent interim transcript.
                 "last_partial": None,
-
-                # Whether the most recent partial has already been finalized.
                 "last_partial_finalized": True,
             }
 
             # ---------------------------------------------------------------
-            # Deepgram message queue
-            #
-            # The SDK callback itself is synchronous. We place messages into
-            # one queue and process them sequentially. This prevents our
-            # application-level transcript state from being updated by
-            # multiple concurrent callback tasks.
+            # Sequential Deepgram message queue
             # ---------------------------------------------------------------
 
             message_queue: asyncio.Queue = (
@@ -399,18 +431,18 @@ class DeepgramSTTService:
                     return
 
                 try:
-
                     await on_transcript(
                         payload
                     )
 
                 except Exception:
                     logger.exception(
-                        "on_transcript callback raised an exception."
+                        "on_transcript callback "
+                        "raised an exception."
                     )
 
             # ---------------------------------------------------------------
-            # Message processing
+            # Message processor
             # ---------------------------------------------------------------
 
             async def handle_message(
@@ -418,6 +450,32 @@ class DeepgramSTTService:
             ) -> None:
 
                 nonlocal last_audio_sent_ts
+
+                # -----------------------------------------------------------
+                # Internal error event
+                # -----------------------------------------------------------
+
+                if isinstance(
+                    message,
+                    dict,
+                ):
+
+                    error_message = (
+                        message.get(
+                            "__agni_error__"
+                        )
+                    )
+
+                    if error_message:
+
+                        await emit(
+                            {
+                                "type": "error",
+                                "message": error_message,
+                            }
+                        )
+
+                    return
 
                 message_type = getattr(
                     message,
@@ -462,7 +520,8 @@ class DeepgramSTTService:
 
                     sent_ts = (
                         last_audio_sent_ts
-                        if last_audio_sent_ts is not None
+                        if last_audio_sent_ts
+                        is not None
                         else response_ts
                     )
 
@@ -474,9 +533,6 @@ class DeepgramSTTService:
                         )
                     )
 
-                    # Deepgram's speech_final indicates the end of a
-                    # speech segment, while is_final indicates that this
-                    # result itself will not be revised.
                     speech_final = bool(
                         getattr(
                             message,
@@ -492,7 +548,6 @@ class DeepgramSTTService:
                         transcript,
                     )
 
-                    # Track final results.
                     if is_final:
 
                         state[
@@ -524,6 +579,7 @@ class DeepgramSTTService:
                             "is_final": is_final,
                             "speech_final": speech_final,
                             "latency_ms": latency_ms,
+                            "language_mode": self.language,
                         }
                     )
 
@@ -533,14 +589,18 @@ class DeepgramSTTService:
                 # Speech started
                 # ===========================================================
 
-                if message_type == "SpeechStarted":
+                if (
+                    message_type
+                    == "SpeechStarted"
+                ):
 
-                    # Deepgram can occasionally produce more than one
-                    # SpeechStarted signal during a continuous session.
-                    # Only forward the transition into speech.
-                    if not state["in_speech"]:
+                    if not state[
+                        "in_speech"
+                    ]:
 
-                        state["in_speech"] = True
+                        state[
+                            "in_speech"
+                        ] = True
 
                         logger.info(
                             "VAD: speech started"
@@ -548,7 +608,12 @@ class DeepgramSTTService:
 
                         await emit(
                             {
-                                "type": "speech_started",
+                                "type": (
+                                    "speech_started"
+                                ),
+                                "language_mode": (
+                                    self.language
+                                ),
                             }
                         )
 
@@ -558,10 +623,14 @@ class DeepgramSTTService:
                 # Utterance end
                 # ===========================================================
 
-                if message_type == "UtteranceEnd":
+                if (
+                    message_type
+                    == "UtteranceEnd"
+                ):
 
                     logger.info(
-                        "VAD/Endpointing: utterance end"
+                        "VAD/Endpointing: "
+                        "utterance end"
                     )
 
                     if not state[
@@ -569,13 +638,17 @@ class DeepgramSTTService:
                     ]:
 
                         logger.info(
-                            "Silence detected: utterance ended "
-                            "without a final transcript."
+                            "Silence detected: "
+                            "utterance ended without "
+                            "a final transcript."
                         )
 
                         await emit(
                             {
                                 "type": "silence",
+                                "language_mode": (
+                                    self.language
+                                ),
                             }
                         )
 
@@ -590,6 +663,9 @@ class DeepgramSTTService:
                     await emit(
                         {
                             "type": "utterance_end",
+                            "language_mode": (
+                                self.language
+                            ),
                         }
                     )
 
@@ -607,14 +683,17 @@ class DeepgramSTTService:
                     )
 
             # ---------------------------------------------------------------
-            # Sequential message processor
+            # Sequential queue processor
             # ---------------------------------------------------------------
 
-            async def process_message_queue() -> None:
+            async def process_message_queue(
+            ) -> None:
 
                 while True:
 
-                    message = await message_queue.get()
+                    message = (
+                        await message_queue.get()
+                    )
 
                     try:
 
@@ -626,22 +705,22 @@ class DeepgramSTTService:
                         )
 
                     finally:
+
                         message_queue.task_done()
 
-            processor_task = asyncio.create_task(
-                process_message_queue()
+            processor_task = (
+                asyncio.create_task(
+                    process_message_queue()
+                )
             )
 
             # ---------------------------------------------------------------
-            # Synchronous SDK callbacks
+            # Deepgram SDK callbacks
             # ---------------------------------------------------------------
 
             def on_message(
                 message,
             ) -> None:
-                """
-                Queue Deepgram events for sequential async processing.
-                """
 
                 message_queue.put_nowait(
                     message
@@ -652,7 +731,8 @@ class DeepgramSTTService:
             ) -> None:
 
                 logger.info(
-                    "Deepgram streaming connection opened."
+                    "Deepgram streaming "
+                    "connection opened."
                 )
 
             def on_close(
@@ -660,7 +740,8 @@ class DeepgramSTTService:
             ) -> None:
 
                 logger.info(
-                    "Deepgram streaming connection closed: %s",
+                    "Deepgram streaming "
+                    "connection closed: %s",
                     message,
                 )
 
@@ -673,8 +754,6 @@ class DeepgramSTTService:
                     error,
                 )
 
-                # Forward errors through the same message queue so
-                # output ordering remains deterministic.
                 message_queue.put_nowait(
                     {
                         "__agni_error__": str(
@@ -684,7 +763,7 @@ class DeepgramSTTService:
                 )
 
             # ---------------------------------------------------------------
-            # Register event handlers
+            # Register Deepgram callbacks
             # ---------------------------------------------------------------
 
             connection.on(
@@ -708,11 +787,13 @@ class DeepgramSTTService:
             )
 
             # ---------------------------------------------------------------
-            # Start Deepgram receive loop
+            # Start Deepgram listener
             # ---------------------------------------------------------------
 
-            listener_task = asyncio.create_task(
-                connection.start_listening()
+            listener_task = (
+                asyncio.create_task(
+                    connection.start_listening()
+                )
             )
 
             try:
@@ -726,7 +807,9 @@ class DeepgramSTTService:
                     if not chunk:
                         continue
 
-                    last_audio_sent_ts = time.time()
+                    last_audio_sent_ts = (
+                        time.time()
+                    )
 
                     await connection.send_media(
                         chunk
@@ -735,7 +818,7 @@ class DeepgramSTTService:
             finally:
 
                 # ===========================================================
-                # Finalize the Deepgram stream FIRST
+                # Finalize Deepgram stream
                 # ===========================================================
 
                 try:
@@ -750,16 +833,30 @@ class DeepgramSTTService:
                     )
 
                 # ===========================================================
-                # Allow trailing results to arrive
+                # Allow trailing results
                 # ===========================================================
 
-                await asyncio.sleep(
-                    trailing_wait_s
-                )
+                try:
 
-                # Make sure everything already received from Deepgram has
-                # been processed before checking for incomplete speech.
-                await message_queue.join()
+                    await asyncio.sleep(
+                        trailing_wait_s
+                    )
+
+                except asyncio.CancelledError:
+
+                    pass
+
+                # ===========================================================
+                # Process anything already received
+                # ===========================================================
+
+                try:
+
+                    await message_queue.join()
+
+                except asyncio.CancelledError:
+
+                    pass
 
                 # ===========================================================
                 # Incomplete speech
@@ -773,7 +870,8 @@ class DeepgramSTTService:
                 ):
 
                     logger.info(
-                        "Incomplete speech at stream end: %r",
+                        "Incomplete speech "
+                        "at stream end: %r",
                         state[
                             "last_partial"
                         ],
@@ -781,20 +879,30 @@ class DeepgramSTTService:
 
                     await emit(
                         {
-                            "type": "incomplete_speech",
-                            "transcript": state[
-                                "last_partial"
-                            ],
+                            "type": (
+                                "incomplete_speech"
+                            ),
+                            "transcript": (
+                                state[
+                                    "last_partial"
+                                ]
+                            ),
+                            "language_mode": (
+                                self.language
+                            ),
                         }
                     )
 
                 # ===========================================================
-                # Tell Deepgram no more audio is coming
+                # Close Deepgram stream
                 # ===========================================================
 
                 try:
 
-                    await connection.send_close_stream()
+                    await (
+                        connection
+                        .send_close_stream()
+                    )
 
                 except Exception:
 
@@ -804,20 +912,33 @@ class DeepgramSTTService:
                     )
 
                 # ===========================================================
-                # Stop the message processor cleanly
+                # Stop message processor
                 # ===========================================================
 
                 message_queue.put_nowait(
                     None
                 )
 
-                await message_queue.join()
+                try:
 
-                # The processor returns after consuming None.
-                await processor_task
+                    await message_queue.join()
+
+                except asyncio.CancelledError:
+
+                    pass
+
+                if not processor_task.done():
+
+                    try:
+
+                        await processor_task
+
+                    except asyncio.CancelledError:
+
+                        pass
 
                 # ===========================================================
-                # Wait for the Deepgram listener
+                # Wait for Deepgram listener
                 # ===========================================================
 
                 if not listener_task.done():
@@ -838,12 +959,18 @@ class DeepgramSTTService:
                             await listener_task
 
                         except asyncio.CancelledError:
+
                             pass
+
+                    except asyncio.CancelledError:
+
+                        pass
 
                     except Exception:
 
                         logger.debug(
-                            "Deepgram listener stopped with an exception.",
+                            "Deepgram listener stopped "
+                            "with an exception.",
                             exc_info=True,
                         )
 
@@ -854,12 +981,14 @@ class DeepgramSTTService:
                         listener_task.result()
 
                     except asyncio.CancelledError:
+
                         pass
 
                     except Exception:
 
                         logger.debug(
-                            "Deepgram listener stopped with an exception.",
+                            "Deepgram listener stopped "
+                            "with an exception.",
                             exc_info=True,
                         )
 
@@ -875,14 +1004,16 @@ class DeepgramSTTService:
         await self._run(
             _as_async_iter(
                 _mic_audio_generator(
-                    samplerate=self.samplerate,
+                    samplerate=(
+                        self.samplerate
+                    ),
                 )
             )
         )
 
 
     # =========================================================================
-    # Standalone WAV file
+    # Standalone WAV
     # =========================================================================
 
     async def stream_from_file(
@@ -893,7 +1024,7 @@ class DeepgramSTTService:
         await self._run(
             _as_async_iter(
                 _file_audio_generator(
-                    path,
+                    path
                 )
             )
         )
@@ -918,7 +1049,9 @@ class DeepgramSTTService:
         await self._run(
             audio_gen=audio_gen,
             on_transcript=on_transcript,
-            trailing_wait_s=trailing_wait_s,
+            trailing_wait_s=(
+                trailing_wait_s
+            ),
             encoding=encoding,
             sample_rate=sample_rate,
             channels=channels,
@@ -942,7 +1075,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
         description=(
-            "Agni AI streaming Deepgram STT service."
+            "Agni AI streaming "
+            "Deepgram STT service."
         )
     )
 
@@ -953,13 +1087,27 @@ if __name__ == "__main__":
             "file",
         ],
         required=True,
-        help="Audio source for standalone testing.",
+        help=(
+            "Audio source for "
+            "standalone testing."
+        ),
     )
 
     parser.add_argument(
         "--path",
         help=(
-            "WAV file path when using --source file."
+            "WAV file path when "
+            "using --source file."
+        ),
+    )
+
+    parser.add_argument(
+        "--language",
+        default=None,
+        help=(
+            "Deepgram language mode. "
+            "Agni AI currently uses "
+            "multi, hi, or mr."
         ),
     )
 
@@ -970,21 +1118,32 @@ if __name__ == "__main__":
         and not args.path
     ):
         parser.error(
-            "--path is required for --source file."
+            "--path is required "
+            "for --source file."
         )
 
-    stt = DeepgramSTTService()
+    stt = DeepgramSTTService(
+        language=args.language,
+    )
 
-    if args.source == "mic":
+    try:
 
-        asyncio.run(
-            stt.stream_from_mic()
-        )
+        if args.source == "mic":
 
-    else:
-
-        asyncio.run(
-            stt.stream_from_file(
-                args.path
+            asyncio.run(
+                stt.stream_from_mic()
             )
+
+        else:
+
+            asyncio.run(
+                stt.stream_from_file(
+                    args.path
+                )
+            )
+
+    except KeyboardInterrupt:
+
+        logger.info(
+            "STT stopped by user."
         )
