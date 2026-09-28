@@ -68,14 +68,20 @@ load_dotenv(
 # LiveKit
 # ---------------------------------------------------------------------------
 
-ROOM_NAME = os.getenv(
-    "LIVEKIT_ROOM_NAME",
-    "agni-ai-voice-poc",
+ROOM_NAME = (
+    os.getenv("AGNI_SESSION_ROOM_NAME")
+    or os.getenv(
+        "LIVEKIT_ROOM_NAME",
+        "agni-ai-voice-poc",
+    )
 )
 
-PARTICIPANT_IDENTITY = os.getenv(
-    "LIVEKIT_SUBSCRIBER_IDENTITY",
-    "agni-audio-subscriber",
+PARTICIPANT_IDENTITY = (
+    os.getenv("AGNI_SESSION_PARTICIPANT_IDENTITY")
+    or os.getenv(
+        "LIVEKIT_SUBSCRIBER_IDENTITY",
+        "agni-audio-subscriber",
+    )
 )
 
 
@@ -116,9 +122,12 @@ STT_STREAM_ENDPOINT = os.getenv(
 #
 # "multi" remains available as an optional/manual mode.
 
-REQUESTED_STT_LANGUAGE = os.getenv(
-    "AGNI_STT_LANGUAGE",
-    "multi",
+REQUESTED_STT_LANGUAGE = (
+    os.getenv("AGNI_SESSION_LANGUAGE")
+    or os.getenv(
+        "AGNI_STT_LANGUAGE",
+        "multi",
+    )
 ).strip()
 
 STT_LANGUAGE_ALIASES = {
