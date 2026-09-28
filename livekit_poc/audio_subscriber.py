@@ -91,6 +91,93 @@ STT_STREAM_ENDPOINT = os.getenv(
     "ws://127.0.0.1:8000/api/v1/stt/stream",
 )
 
+# User-facing language selection.
+#
+# Examples:
+#
+#   AGNI_STT_LANGUAGE=english
+#   AGNI_STT_LANGUAGE=hindi
+#   AGNI_STT_LANGUAGE=hinglish
+#   AGNI_STT_LANGUAGE=marathi
+#
+# Canonical Deepgram values also remain supported:
+#
+#   en-IN
+#   hi
+#   mr
+#   multi
+#
+# Based on Agni's actual STT testing:
+#
+#   English  -> en-IN
+#   Hindi    -> hi
+#   Hinglish -> hi
+#   Marathi  -> mr
+#
+# "multi" remains available as an optional/manual mode.
+
+REQUESTED_STT_LANGUAGE = os.getenv(
+    "AGNI_STT_LANGUAGE",
+    "multi",
+).strip()
+
+STT_LANGUAGE_ALIASES = {
+    # English
+    "en": "en-IN",
+    "en-in": "en-IN",
+    "english": "en-IN",
+
+    # Hindi
+    "hi": "hi",
+    "hindi": "hi",
+
+    # Hinglish
+    #
+    # Agni testing showed Hinglish works better
+    # with Deepgram's Hindi mode than "multi".
+    "hinglish": "hi",
+
+    # Marathi
+    "mr": "mr",
+    "marathi": "mr",
+
+    # Optional multilingual/debug mode
+    "multi": "multi",
+}
+
+STT_LANGUAGE = STT_LANGUAGE_ALIASES.get(
+    REQUESTED_STT_LANGUAGE.lower(),
+    REQUESTED_STT_LANGUAGE,
+)
+
+SUPPORTED_STT_LANGUAGES = {
+    "en-IN",
+    "hi",
+    "mr",
+    "multi",
+}
+
+if STT_LANGUAGE not in SUPPORTED_STT_LANGUAGES:
+
+    raise RuntimeError(
+        "Unsupported AGNI_STT_LANGUAGE: "
+        f"{REQUESTED_STT_LANGUAGE}. "
+        "Use English, Hindi, Hinglish, Marathi, "
+        "or en-IN, hi, mr, multi."
+    )
+
+separator = (
+    "&"
+    if "?" in STT_STREAM_ENDPOINT
+    else "?"
+)
+
+STT_STREAM_ENDPOINT_WITH_LANGUAGE = (
+    f"{STT_STREAM_ENDPOINT}"
+    f"{separator}"
+    f"language={STT_LANGUAGE}"
+)
+
 
 # ---------------------------------------------------------------------------
 # TTS
@@ -1188,11 +1275,18 @@ async def main() -> None:
         "Initializing OpenAI LLM provider..."
     )
 
-    llm_provider = OpenAILLMProvider()
+    llm_provider = OpenAILLMProvider(
+        response_language=REQUESTED_STT_LANGUAGE,
+    )
 
     print(
         f"LLM ready: "
         f"{llm_provider.model}"
+    )
+
+    print(
+        "LLM response language: "
+        f"{llm_provider.response_language or 'auto'}"
     )
 
     print(
@@ -1366,7 +1460,7 @@ async def main() -> None:
         # -----------------------------------------------------------
 
         stt_adapter = STTStreamAdapter(
-            endpoint=STT_STREAM_ENDPOINT
+            endpoint=STT_STREAM_ENDPOINT_WITH_LANGUAGE
         )
 
         print(
@@ -1414,7 +1508,17 @@ async def main() -> None:
 
         print(
             f"Streaming STT endpoint: "
-            f"{STT_STREAM_ENDPOINT}"
+            f"{STT_STREAM_ENDPOINT_WITH_LANGUAGE}"
+        )
+
+        print(
+            f"Requested STT language: "
+            f"{REQUESTED_STT_LANGUAGE}"
+        )
+
+        print(
+            f"Deepgram STT language mode: "
+            f"{STT_LANGUAGE}"
         )
 
         print()

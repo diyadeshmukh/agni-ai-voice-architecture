@@ -3,16 +3,21 @@ Agni AI - ElevenLabs TTS Provider
 
 Concrete TTS implementation for the Agni AI TTSProvider interface.
 
-Supports two modes:
+Uses ElevenLabs Eleven v3 Conversational through the current
+Text-to-Dialogue WebSocket API.
 
-1. Standard text -> streaming audio
-2. Streaming LLM text -> ElevenLabs WebSocket -> streaming audio
+Supports:
+
+1. Complete text -> streaming PCM16 audio
+2. Streaming LLM text -> streaming PCM16 audio
 
 Realtime optimized flow:
 
     OpenAI text chunks
           ↓
-    ElevenLabs TTS WebSocket
+    ElevenLabs Text-to-Dialogue WebSocket
+          ↓
+    Eleven v3 Conversational
           ↓
     Streaming PCM16 audio
           ↓
@@ -32,8 +37,11 @@ from typing import AsyncIterator
 
 import websockets
 
+from websockets.exceptions import (
+    ConnectionClosedOK,
+)
+
 from dotenv import load_dotenv
-from elevenlabs import AsyncElevenLabs
 
 from app.voice.tts_provider import (
     TTSProvider,
@@ -51,19 +59,9 @@ class ElevenLabsTTSProvider(TTSProvider):
     """
     ElevenLabs implementation of the Agni AI TTS provider.
 
-    Standard synthesize():
-        Complete text
-            ->
-        ElevenLabs HTTP streaming
-            ->
-        PCM16 audio
-
-    synthesize_streaming_text():
-        Streaming LLM text
-            ->
-        ElevenLabs bidirectional WebSocket
-            ->
-        PCM16 audio
+    Both complete-text and streaming-text synthesis use the
+    ElevenLabs Text-to-Dialogue WebSocket with
+    eleven_v3_conversational.
 
     Output format:
 
@@ -110,9 +108,22 @@ class ElevenLabsTTSProvider(TTSProvider):
             model_id
             or os.getenv(
                 "ELEVENLABS_MODEL_ID",
-                "eleven_flash_v2_5",
+                "eleven_v3_conversational",
             )
         )
+
+        # Text-to-Dialogue WebSocket is for
+        # Eleven v3 models only.
+        if not self.model_id.startswith(
+            "eleven_v3"
+        ):
+
+            raise RuntimeError(
+                "ElevenLabs Text-to-Dialogue "
+                "WebSocket requires a v3 model. "
+                "Use ELEVENLABS_MODEL_ID="
+                "eleven_v3_conversational."
+            )
 
         self.output_format = (
             output_format
@@ -122,9 +133,15 @@ class ElevenLabsTTSProvider(TTSProvider):
             )
         )
 
-        self.client = AsyncElevenLabs(
-            api_key=self.api_key
-        )
+        # Agni's current LiveKit output path expects
+        # raw PCM16 audio at 16 kHz.
+        if self.output_format != "pcm_16000":
+
+            raise RuntimeError(
+                "Agni AI currently expects "
+                "ELEVENLABS_OUTPUT_FORMAT=pcm_16000 "
+                "for the LiveKit audio pipeline."
+            )
 
     # ------------------------------------------------------------------
     # Standard complete-text streaming
@@ -135,10 +152,18 @@ class ElevenLabsTTSProvider(TTSProvider):
         text: str,
     ) -> AsyncIterator[TTSAudioChunk]:
         """
-        Convert a complete text string into streaming PCM16 audio.
+        Convert complete text into streaming PCM16 audio.
 
-        This method is kept for existing standalone TTS tests
-        and callers that already have the full response text.
+        Complete-text synthesis deliberately uses the same
+        Eleven v3 Conversational Text-to-Dialogue path as
+        realtime LLM streaming.
+
+        This keeps one TTS architecture for:
+
+            English
+            Hindi
+            Hinglish
+            Marathi
         """
 
         text = text.strip()
@@ -146,32 +171,18 @@ class ElevenLabsTTSProvider(TTSProvider):
         if not text:
             return
 
-        audio_stream = (
-            self.client.text_to_speech.stream(
-                voice_id=self.voice_id,
-                text=text,
-                model_id=self.model_id,
-                output_format=self.output_format,
+        async def text_stream(
+        ) -> AsyncIterator[str]:
+
+            yield text
+
+        async for audio_chunk in (
+            self.synthesize_streaming_text(
+                text_stream()
             )
-        )
+        ):
 
-        async for chunk in audio_stream:
-
-            if not isinstance(
-                chunk,
-                bytes,
-            ):
-                continue
-
-            if not chunk:
-                continue
-
-            yield TTSAudioChunk(
-                data=chunk,
-                sample_rate=16_000,
-                channels=1,
-                encoding="pcm_s16le",
-            )
+            yield audio_chunk
 
     # ------------------------------------------------------------------
     # Realtime streaming-text TTS
@@ -182,29 +193,29 @@ class ElevenLabsTTSProvider(TTSProvider):
         text_stream: AsyncIterator[str],
     ) -> AsyncIterator[TTSAudioChunk]:
         """
-        Stream text into ElevenLabs while the LLM is still generating.
+        Stream LLM text into ElevenLabs while OpenAI
+        is still generating.
 
-        This uses ElevenLabs' bidirectional TTS WebSocket.
+        Current ElevenLabs path:
 
-        OpenAI:
-            text chunk
-            text chunk
-            text chunk
-                ↓
-        ElevenLabs WebSocket
-                ↓
-        audio chunk
-        audio chunk
-        audio chunk
+            /v1/text-to-dialogue/stream-input
 
-        The WebSocket connection and OpenAI generation can therefore
-        overlap instead of waiting for the complete LLM response.
+        Protocol:
+
+            1. Register the configured voice.
+            2. Send incremental text through "inputs".
+            3. Receive base64 PCM audio concurrently.
+            4. Send close_socket=True after text ends.
+            5. Continue receiving until is_final=True.
+
+        ElevenLabs performs its own contextual buffering.
+        Agni only buffers incomplete word fragments locally
+        so token boundaries are not sent as broken words.
         """
 
         websocket_url = (
             "wss://api.elevenlabs.io/"
-            f"v1/text-to-speech/"
-            f"{self.voice_id}/stream-input"
+            "v1/text-to-dialogue/stream-input"
             f"?model_id={self.model_id}"
             f"&output_format={self.output_format}"
         )
@@ -214,26 +225,19 @@ class ElevenLabsTTSProvider(TTSProvider):
         ) as websocket:
 
             # ----------------------------------------------------------
-            # Initialize ElevenLabs WebSocket
+            # Register voice / authenticate
+            #
+            # eleven_v3_conversational currently allows one
+            # registered voice per WebSocket connection.
             # ----------------------------------------------------------
 
             await websocket.send(
                 json.dumps(
                     {
-                        "text": " ",
+                        "voices": [
+                            self.voice_id
+                        ],
                         "xi_api_key": self.api_key,
-
-                        # Lower first generation threshold than the
-                        # default while keeping enough text context
-                        # for reasonable speech quality.
-                        "generation_config": {
-                            "chunk_length_schedule": [
-                                50,
-                                120,
-                                160,
-                                290,
-                            ]
-                        },
                     }
                 )
             )
@@ -244,12 +248,15 @@ class ElevenLabsTTSProvider(TTSProvider):
 
             async def send_text() -> None:
                 """
-                Consume OpenAI text chunks and forward them to
-                ElevenLabs.
+                Consume OpenAI text chunks and send word-aligned
+                incremental text to ElevenLabs.
 
-                Small incomplete word fragments are temporarily
-                buffered so ElevenLabs is not given artificially
-                broken words.
+                OpenAI can produce partial token/word fragments.
+                We therefore retain only the incomplete trailing
+                word locally.
+
+                ElevenLabs itself decides when enough context
+                exists to start generating audio.
                 """
 
                 pending_text = ""
@@ -263,17 +270,27 @@ class ElevenLabsTTSProvider(TTSProvider):
 
                         pending_text += text_chunk
 
-                        # Find the latest safe whitespace boundary.
+                        # ----------------------------------------------
+                        # Find the latest safe whitespace boundary
+                        # ----------------------------------------------
+
                         boundary_positions = [
-                            pending_text.rfind(" "),
-                            pending_text.rfind("\n"),
-                            pending_text.rfind("\t"),
+                            pending_text.rfind(
+                                " "
+                            ),
+                            pending_text.rfind(
+                                "\n"
+                            ),
+                            pending_text.rfind(
+                                "\t"
+                            ),
                         ]
 
                         boundary = max(
                             boundary_positions
                         )
 
+                        # No complete word yet.
                         if boundary < 0:
                             continue
 
@@ -289,18 +306,33 @@ class ElevenLabsTTSProvider(TTSProvider):
                             ]
                         )
 
-                        if ready_text:
+                        if not ready_text:
+                            continue
 
-                            await websocket.send(
-                                json.dumps(
-                                    {
-                                        "text": ready_text,
-                                    }
-                                )
+                        # ----------------------------------------------
+                        # Send incremental dialogue input
+                        # ----------------------------------------------
+
+                        await websocket.send(
+                            json.dumps(
+                                {
+                                    "inputs": [
+                                        {
+                                            "text": (
+                                                ready_text
+                                            ),
+                                            "voice_id": (
+                                                self.voice_id
+                                            ),
+                                            "new_turn": False,
+                                        }
+                                    ]
+                                }
                             )
+                        )
 
                     # --------------------------------------------------
-                    # Flush any final incomplete word / short response
+                    # Send final incomplete word / short text
                     # --------------------------------------------------
 
                     if pending_text:
@@ -308,27 +340,46 @@ class ElevenLabsTTSProvider(TTSProvider):
                         await websocket.send(
                             json.dumps(
                                 {
-                                    "text": pending_text,
-                                    "flush": True,
+                                    "inputs": [
+                                        {
+                                            "text": (
+                                                pending_text
+                                            ),
+                                            "voice_id": (
+                                                self.voice_id
+                                            ),
+                                            "new_turn": False,
+                                        }
+                                    ]
                                 }
                             )
                         )
 
                 finally:
 
-                    # Empty text marks end of the input sequence
-                    # and forces any remaining buffered audio.
+                    # --------------------------------------------------
+                    # Finish this dialogue session
+                    #
+                    # close_socket causes ElevenLabs to:
+                    #
+                    # - flush remaining buffered text
+                    # - generate remaining audio
+                    # - send is_final=True
+                    # - close the WebSocket
+                    # --------------------------------------------------
+
                     try:
 
                         await websocket.send(
                             json.dumps(
                                 {
-                                    "text": "",
+                                    "close_socket": True,
                                 }
                             )
                         )
 
                     except Exception:
+
                         pass
 
             sender_task = asyncio.create_task(
@@ -338,27 +389,43 @@ class ElevenLabsTTSProvider(TTSProvider):
             try:
 
                 # ------------------------------------------------------
-                # Receive ElevenLabs audio while text is still arriving
+                # Receive audio while OpenAI may still be generating
                 # ------------------------------------------------------
 
                 while True:
 
-                    raw_message = (
-                        await websocket.recv()
-                    )
+                    try:
+
+                        raw_message = (
+                            await websocket.recv()
+                        )
+
+                    except ConnectionClosedOK:
+
+                        break
 
                     message = json.loads(
                         raw_message
                     )
 
-                    # ElevenLabs can return API errors inside
-                    # the WebSocket message.
-                    if message.get("error"):
+                    # --------------------------------------------------
+                    # ElevenLabs API error
+                    # --------------------------------------------------
+
+                    if message.get(
+                        "error"
+                    ):
 
                         raise RuntimeError(
-                            "ElevenLabs WebSocket error: "
-                            f"{message['error']}"
+                            "ElevenLabs "
+                            "Text-to-Dialogue "
+                            "WebSocket error: "
+                            f"{message}"
                         )
+
+                    # --------------------------------------------------
+                    # Audio chunk
+                    # --------------------------------------------------
 
                     audio_base64 = (
                         message.get(
@@ -383,31 +450,36 @@ class ElevenLabsTTSProvider(TTSProvider):
                                 encoding="pcm_s16le",
                             )
 
-                    # TTS WebSocket normally returns isFinal.
-                    # Supporting both forms makes parsing robust.
-                    is_final = bool(
-                        message.get(
-                            "isFinal",
-                            False,
-                        )
-                        or message.get(
-                            "is_final",
-                            False,
-                        )
-                    )
+                    # --------------------------------------------------
+                    # Final session frame
+                    #
+                    # Do not stop at is_final_audio_for_turn.
+                    #
+                    # We close only after close_socket has caused
+                    # ElevenLabs to flush every remaining audio byte.
+                    # --------------------------------------------------
 
-                    if is_final:
+                    if message.get(
+                        "is_final",
+                        False,
+                    ):
+
                         break
 
             finally:
 
-                # Make sure the text-producing task is finished.
+                # ------------------------------------------------------
+                # Make sure the text sender finished cleanly
+                # ------------------------------------------------------
+
                 if not sender_task.done():
 
                     try:
+
                         await sender_task
 
                     except asyncio.CancelledError:
+
                         raise
 
                 else:

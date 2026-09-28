@@ -10,24 +10,44 @@ Expected incoming audio:
     - mono
     - binary WebSocket messages
 
-Supported language query modes:
+User-facing language routing:
+
+    English
+        -> en-IN
+
+    Hindi
+        -> hi
+
+    Hinglish
+        -> hi
+
+    Marathi
+        -> mr
+
+Optional manual/debug mode:
 
     multi
-        English + Hinglish / English-Hindi code-switching
-
-    hi
-        Hindi
-
-    mr
-        Marathi
+        -> multi
 
 Examples:
 
-    /api/v1/stt/stream?language=multi
+    /api/v1/stt/stream?language=english
+
+    /api/v1/stt/stream?language=hindi
+
+    /api/v1/stt/stream?language=hinglish
+
+    /api/v1/stt/stream?language=marathi
+
+Canonical Deepgram language values are also accepted:
+
+    /api/v1/stt/stream?language=en-IN
 
     /api/v1/stt/stream?language=hi
 
     /api/v1/stt/stream?language=mr
+
+    /api/v1/stt/stream?language=multi
 
 If no language query parameter is supplied,
 DeepgramSTTService uses DEEPGRAM_STT_LANGUAGE
@@ -89,16 +109,13 @@ _SENTINEL = object()
 
 
 # ===========================================================================
-# Supported language modes
-#
-# This is the block you asked about.
-#
-# It belongs here, directly after _SENTINEL.
+# Supported canonical Deepgram language modes
 # ===========================================================================
 
 SUPPORTED_LANGUAGE_MODES = {
-    "multi",
+    "en-IN",
     "hi",
+    "multi",
     "mr",
 }
 
@@ -122,13 +139,25 @@ async def stt_stream(
         Channels    : 1
         Encoding    : linear16 / PCM16
 
-    Optional query parameter:
+    Recommended user-facing query values:
 
-        ?language=multi
+        ?language=english
+
+        ?language=hindi
+
+        ?language=hinglish
+
+        ?language=marathi
+
+    Canonical values also work:
+
+        ?language=en-IN
 
         ?language=hi
 
         ?language=mr
+
+        ?language=multi
     """
 
     # -----------------------------------------------------------------------
@@ -141,15 +170,47 @@ async def stt_stream(
         )
     )
 
+    language_aliases = {
+        # English
+        "en": "en-IN",
+        "en-in": "en-IN",
+        "english": "en-IN",
+
+        # Hindi
+        "hi": "hi",
+        "hindi": "hi",
+
+        # Hinglish
+        #
+        # Agni testing showed Hinglish performs
+        # better using Deepgram Hindi mode.
+        "hinglish": "hi",
+
+        # Marathi
+        "mr": "mr",
+        "marathi": "mr",
+
+        # Optional multilingual/debug mode
+        "multi": "multi",
+    }
+
     if requested_language is not None:
 
         requested_language = (
-            requested_language
-            .strip()
-            .lower()
+            requested_language.strip()
         )
 
-        if not requested_language:
+        if requested_language:
+
+            requested_language = (
+                language_aliases.get(
+                    requested_language.lower(),
+                    requested_language,
+                )
+            )
+
+        else:
+
             requested_language = None
 
     # -----------------------------------------------------------------------

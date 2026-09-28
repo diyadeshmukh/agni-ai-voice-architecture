@@ -320,8 +320,14 @@ class DeepgramSTTService:
         if not self.language:
             self.language = "multi"
 
-        self.language = (
+        normalized_language = (
             self.language.lower()
+        )
+
+        self.language = (
+            "en-IN"
+            if normalized_language == "en-in"
+            else normalized_language
         )
 
     async def _run(
@@ -356,16 +362,18 @@ class DeepgramSTTService:
 
         # -------------------------------------------------------------------
         # Project terminology
+        #
+        # Nova-3 Keyterm Prompting.
+        #
+        # Keep this list small and focused on terms that have actually
+        # shown recognition problems during Agni AI testing.
         # -------------------------------------------------------------------
 
         keyterms = [
             "Agni AI",
-            "LiveKit",
-            "AudioFrame",
-            "Deepgram",
-            "speech-to-text",
-            "streaming STT",
-            "voice pipeline",
+            "Python",
+            "list",
+            "tuple",
         ]
 
         # -------------------------------------------------------------------
