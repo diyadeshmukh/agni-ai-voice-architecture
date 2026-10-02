@@ -1,21 +1,30 @@
-# Agni AI — Voice Architecture & Real-Time Voice Pipeline
+# Agni AI — Real-Time Voice Agent
 
-> A modular real-time voice pipeline for Agni AI using **LiveKit**, **Deepgram**, **OpenAI**, **ElevenLabs**, and **FastAPI**.
+> A modular real-time voice AI pipeline built with **LiveKit**, **Deepgram**, **OpenAI**, **ElevenLabs**, and **FastAPI**.
 
 ---
 
 ## Overview
 
-Agni AI is being developed as a real-time voice AI system with a modular provider-based architecture.
+Agni AI is a real-time voice-agent system designed to replace a human voice agent in a call flow.
 
-This repository contains the current voice architecture, streaming Speech-to-Text (STT) implementation, OpenAI LLM provider layer, Text-to-Speech (TTS) provider layer, and LiveKit proof-of-concept (POC) components.
+The current repository contains:
 
-The main goal is to keep the voice pipeline modular so that individual providers can be replaced or integrated independently.
+- streaming Speech-to-Text (STT)
+- OpenAI LLM integration
+- streaming ElevenLabs Text-to-Speech (TTS)
+- LiveKit audio transport
+- hard barge-in / interruption support
+- multilingual STT routing
+- frontend-facing agent session APIs
+- local development and diagnostic POCs
 
-### Current voice flow
+The production telephony layer is planned around Exotel. Exotel integration is not implemented yet.
+
+### Current local voice flow
 
 ```text
-Caller / Microphone
+Laptop Microphone
         │
         ▼
      LiveKit
@@ -31,24 +40,23 @@ Completed Utterance
    OpenAI LLM
         │
         ▼
- AI Response Text
+ Streaming Text
         │
         ▼
-      TTS
-  (ElevenLabs)
+ ElevenLabs TTS
         │
         ▼
  Streaming PCM Audio
         │
         ▼
      LiveKit
+   voice-output
         │
         ▼
-Caller / Speaker
+ Laptop Speaker
 ```
 
-> **Important:** Interim STT transcripts are displayed locally but are **not sent to OpenAI**.
-> Only completed utterances are sent to the LLM.
+Interim STT transcripts are displayed for diagnostics but are **not sent to OpenAI**. Only completed utterances are sent to the LLM.
 
 ---
 
@@ -57,28 +65,23 @@ Caller / Speaker
 | Component | Status | Description |
 |---|---|---|
 | LiveKit connection | ✅ Working | Room connection and audio transport |
-| LiveKit audio publishing | ✅ Working | Publishes audio tracks to a room |
+| LiveKit microphone publishing | ✅ Working | Publishes local microphone audio |
 | LiveKit audio subscription | ✅ Working | Receives remote audio tracks |
-| Microphone capture | ✅ Working | Local microphone testing |
-| Streaming STT | ✅ Working | Deepgram real-time transcription |
-| Interim transcripts | ✅ Working | Displayed locally only |
-| Final transcripts | ✅ Working | Final speech recognition results |
-| Utterance detection | ✅ Working | Uses final transcript + utterance end |
-| LLM provider interface | ✅ Working | Provider-independent LLM contract |
-| OpenAI LLM | ✅ Working | Generates concise AI responses |
-| STT → LLM integration | ✅ Working | One LLM call per completed utterance |
-| TTS provider interface | ✅ Working | Provider-independent TTS contract |
-| ElevenLabs TTS | ✅ Working | Streaming text-to-speech |
-| LiveKit TTS output | ✅ Working | Publishes generated speech into LiveKit |
-| Local TTS playback | ✅ Working | TTS listener plays received audio |
-| STT → LLM → TTS | ✅ Working | End-to-end local voice flow verified |
-| Response latency logging | ✅ Working | Measures main voice response stages |
-| LLM diagnostic POC | ✅ Working | Standalone OpenAI test |
-| Echo / feedback suppression | ✅ POC | Mic audio suppressed while AI is active |
-| Barge-in / interruption | 🚧 Pending | User interruption while AI speaks |
+| Streaming STT | ✅ Working | Deepgram realtime transcription |
+| STT language routing | ✅ Working | English, Hindi, Hinglish, Marathi routing |
+| Interim transcripts | ✅ Working | Diagnostic only; never sent to OpenAI |
+| Completed utterance dispatch | ✅ Working | `speech_final` fast path with `utterance_end` fallback |
+| OpenAI LLM | ✅ Working | Streaming response generation |
+| ElevenLabs TTS | ✅ Working | Streaming Text-to-Dialogue WebSocket |
+| OpenAI → ElevenLabs overlap | ✅ Working | TTS can begin before LLM completion |
+| LiveKit AI audio output | ✅ Working | Publishes `voice-output` track |
+| Local speaker playback | ✅ Working | `audio_publisher.py` plays `voice-output` |
+| Hard barge-in | ✅ Core implemented | Cancels active LLM/TTS and clears queued AI audio |
+| Local first-attempt barge-in | ⚠️ POC limitation | Detection can be inconsistent with laptop speaker/microphone acoustics |
+| Agent session API | ✅ Demo-ready | Create, inspect, and stop agent sessions |
 | Conversation history | 🚧 Pending | Current LLM request is stateless |
-| Telephony / Exotel | 🚧 Planned | Phone-call integration |
-| Production orchestration | 🚧 Planned | Session lifecycle and backend integration |
+| Exotel telephony | 🚧 Planned | Production phone-call transport not implemented yet |
+| Production orchestration | 🚧 Planned | Persistent sessions/workers/storage can be added later |
 
 ---
 
@@ -98,7 +101,7 @@ Caller / Speaker
                                 ▼
                     ┌───────────────────────┐
                     │     Deepgram STT      │
-                    │    Streaming Speech   │
+                    │  Flux / Nova routing  │
                     └───────────┬───────────┘
                                 │
                         Completed Utterance
@@ -106,13 +109,13 @@ Caller / Speaker
                                 ▼
                     ┌───────────────────────┐
                     │      OpenAI LLM       │
-                    │   AI Response Text    │
+                    │   Streaming Response  │
                     └───────────┬───────────┘
                                 │
                                 ▼
                     ┌───────────────────────┐
                     │     ElevenLabs TTS    │
-                    │    Streaming Speech   │
+                    │   Streaming PCM16     │
                     └───────────┬───────────┘
                                 │
                                 ▼
@@ -123,80 +126,33 @@ Caller / Speaker
                                 │
                                 ▼
                     ┌───────────────────────┐
-                    │   User / TTS Listener │
+                    │    User / Speaker     │
                     └───────────────────────┘
 ```
 
 ---
 
-## Completed-Utterance LLM Design
+## STT Language Routing
 
-The current voice pipeline is designed to minimize unnecessary LLM requests.
+The user-facing language modes are:
 
-### Interim transcript
+| Mode | Deepgram backend | Model / configuration |
+|---|---|---|
+| `english` | Flux | `flux-general-en` |
+| `hindi` | Flux | `flux-general-multi` + `language_hint=["hi"]` |
+| `hinglish` | Flux | `flux-general-multi` + `language_hint=["en", "hi"]` |
+| `marathi` | Nova-3 | `nova-3` + `language="mr"` |
+| `multi` | Nova-3 | Legacy/debug multilingual mode |
 
-```text
-[PARTIAL] Hello, Agni...
-        ↓
-Displayed in terminal
-        ↓
-No OpenAI request
-```
+Aliases such as `en`, `en-IN`, `hi`, and `mr` are normalized by the STT API.
 
-### Completed utterance
-
-```text
-[FINAL] Hello, Agni AI.
-        ↓
-[VAD] Utterance ended
-        ↓
-"Hello, Agni AI."
-        ↓
-One OpenAI request
-```
-
-This prevents:
-
-- duplicate LLM calls
-- unnecessary token usage
-- responses to unfinished speech
-- repeated AI replies from interim STT text
-
----
-
-## Streaming STT Architecture
-
-The current STT path is:
+### Streaming STT endpoint
 
 ```text
-Microphone
-    ↓
-LiveKit
-    ↓
-AudioFrame
-    ↓
-Audio conversion / resampling
-    ↓
-PCM16 @ 16 kHz mono
-    ↓
-STTStreamAdapter
-    ↓
-FastAPI WebSocket
-    ↓
-Deepgram Streaming STT
-    ↓
-Partial / Final / VAD events
+ws://127.0.0.1:8000/api/v1/stt/stream?language=english
 ```
 
-### Current STT endpoint
-
-```text
-ws://127.0.0.1:8000/api/v1/stt/stream
-```
-
-### STT events
-
-The streaming service can emit:
+Supported normalized STT events include:
 
 ```text
 partial
@@ -208,21 +164,89 @@ incomplete_speech
 error
 ```
 
+For Flux, `StartOfTurn` is normalized to `speech_started`. `StartOfTurn` may contain an empty transcript, so Agni emits `speech_started` immediately instead of waiting for transcript text.
+
+---
+
+## Completed-Utterance LLM Design
+
+The voice pipeline minimizes unnecessary LLM requests.
+
+```text
+[PARTIAL] Explain AI...
+        ↓
+Displayed for diagnostics
+        ↓
+No OpenAI request
+
+[FINAL] Explain AI in detail. [SPEECH FINAL]
+        ↓
+Completed utterance dispatched immediately
+        ↓
+One OpenAI request
+```
+
+`speech_final=True` is the fast path. `utterance_end` remains as a fallback so the same user turn is not sent twice.
+
+This prevents duplicate LLM calls, unnecessary token usage, responses to unfinished speech, and repeated AI replies from interim transcript text.
+
+---
+
+## Barge-In / Interruption
+
+The microphone remains connected to STT while Agni is speaking.
+
+For Flux languages, semantic `StartOfTurn` is used as the primary hard-interrupt signal:
+
+```text
+Agni speaking
+    ↓
+User begins speaking
+    ↓
+Flux StartOfTurn
+    ↓
+speech_started
+    ↓
+interrupt_event set
+    ↓
+Current LLM/TTS response cancelled
+    ↓
+LiveKit queued AI audio cleared
+    ↓
+User's completed utterance is processed
+    ↓
+Agni starts the new response
+```
+
+For Nova-3 / Marathi, raw VAD `speech_started` does not immediately interrupt. A non-empty partial or final transcript confirms the interruption.
+
+`LiveKitAudioOutput` rejects remaining chunks from an interrupted response and clears queued audio before the next response begins.
+
+### Local POC limitation
+
+The core interruption path is implemented and runtime-tested. With a laptop speaker and laptop microphone, the **first** interruption attempt can still be missed because of the local acoustic/audio-processing path. Repeated speech can trigger the interruption correctly.
+
+This local issue should not be treated as proof that the production telephony path will behave the same way. The production Exotel media path will be a separate audio transport and must be tested independently once integrated.
+
 ---
 
 ## LLM Architecture
 
-The LLM layer uses a provider interface so the voice pipeline is not tightly coupled to one implementation.
+The LLM layer uses a provider interface so the main pipeline is not tightly coupled to one implementation.
 
-### LLM provider interface
-
-File:
+Provider interface:
 
 ```text
 app/voice/llm_provider.py
 ```
 
-Core contract:
+OpenAI implementation:
+
+```text
+app/voice/openai_llm_provider.py
+```
+
+Core streaming contract:
 
 ```python
 async def stream_response(
@@ -232,33 +256,6 @@ async def stream_response(
     ...
 ```
 
-The interface also provides:
-
-```python
-async def generate_response(
-    self,
-    user_text: str,
-) -> str:
-    ...
-```
-
-### OpenAI provider
-
-File:
-
-```text
-app/voice/openai_llm_provider.py
-```
-
-Responsibilities:
-
-- load OpenAI configuration
-- initialize the asynchronous OpenAI client
-- accept completed user utterances
-- stream response text
-- keep voice responses concise
-- limit output tokens
-
 Typical configuration:
 
 ```env
@@ -266,18 +263,22 @@ OPENAI_MODEL=gpt-5.6-luna
 OPENAI_MAX_OUTPUT_TOKENS=120
 ```
 
+OpenAI text is streamed toward ElevenLabs rather than waiting for the entire LLM response to finish first.
+
 ---
 
 ## TTS Architecture
 
-The current TTS path is:
+Current TTS path:
 
 ```text
-AI Response Text
+OpenAI text stream
        ↓
    TTSProvider
        ↓
 ElevenLabsTTSProvider
+       ↓
+Text-to-Dialogue WebSocket
        ↓
  Streaming PCM16
        ↓
@@ -287,14 +288,12 @@ LiveKitAudioOutput
        ↓
  LiveKit AudioSource
        ↓
- LocalAudioTrack
-       ↓
   voice-output
        ↓
     LiveKit
 ```
 
-### Current audio format
+### Current audio contract
 
 | Property | Value |
 |---|---|
@@ -302,34 +301,65 @@ LiveKitAudioOutput
 | Sample rate | 16,000 Hz |
 | Channels | Mono |
 | ElevenLabs output | `pcm_16000` |
-| TTS model | `eleven_flash_v2_5` |
+| TTS model | `eleven_v3_conversational` |
+
+The current provider uses the ElevenLabs WebSocket directly through the `websockets` package.
 
 ---
 
-## Provider Abstraction
+## Frontend Agent Session API
 
-The voice architecture keeps provider-specific logic separate from the main pipeline.
+The frontend-facing Agent API is demo-ready.
 
-```text
-                Voice Pipeline
-                     │
-          ┌──────────┼──────────┐
-          │          │          │
-          ▼          ▼          ▼
-        STT          LLM        TTS
-          │          │          │
-          ▼          ▼          ▼
-      Deepgram    OpenAI    ElevenLabs
+Run it with:
+
+```powershell
+uvicorn services.agent_service.main:app --port 8001
 ```
 
-Current provider files:
+The three main session endpoints are:
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/v1/agent/sessions` | Start an Agni agent session |
+| `GET` | `/api/v1/agent/sessions/{session_id}` | Read session status |
+| `DELETE` | `/api/v1/agent/sessions/{session_id}` | Stop the agent session |
+
+Health endpoint:
 
 ```text
-app/voice/llm_provider.py
-app/voice/openai_llm_provider.py
-app/voice/tts_provider.py
-app/voice/elevenlabs_tts_provider.py
+GET /api/v1/agent/health
 ```
+
+Example create request:
+
+```json
+{
+  "language": "english"
+}
+```
+
+Supported session languages:
+
+```text
+english
+hindi
+hinglish
+marathi
+```
+
+A create-session response includes:
+
+- `session_id`
+- current session `status`
+- selected `language`
+- LiveKit URL
+- generated room name
+- short-lived frontend participant token
+- expected microphone track name: `microphone`
+- expected agent audio track name: `voice-output`
+
+The current `AgentSessionManager` keeps session state in memory and starts one `livekit_poc.audio_subscriber` subprocess per session. This is intentionally simple for the current demo and can later be replaced by persistent production orchestration.
 
 ---
 
@@ -339,10 +369,9 @@ app/voice/elevenlabs_tts_provider.py
 agni-ai/
 │
 ├── README.md
-├── .env
-├── .env.local
 ├── .gitignore
 ├── mic_test.py
+├── requirements.txt
 │
 ├── app/
 │   ├── __init__.py
@@ -352,6 +381,7 @@ agni-ai/
 │   │   ├── __init__.py
 │   │   └── v1/
 │   │       ├── __init__.py
+│   │       ├── agent.py
 │   │       └── stt.py
 │   │
 │   ├── core/
@@ -360,21 +390,19 @@ agni-ai/
 │   │
 │   ├── services/
 │   │   ├── __init__.py
+│   │   ├── agent_session_manager.py
 │   │   └── stt_service.py
 │   │
 │   └── voice/
 │       ├── __init__.py
-│       ├── audio_buffer.py
 │       ├── elevenlabs_tts_provider.py
 │       ├── livekit_audio_output.py
 │       ├── llm_provider.py
 │       ├── openai_llm_provider.py
-│       ├── stt_adapter.py
 │       ├── stt_stream_adapter.py
 │       └── tts_provider.py
 │
 ├── docs/
-│   ├── Agni_AI_Voice_Architecture_Notes.docx
 │   └── TTS_PROVIDER_INTERFACE.md
 │
 ├── livekit_poc/
@@ -387,12 +415,18 @@ agni-ai/
 │   └── tts_publisher.py
 │
 └── services/
+    ├── agent_service/
+    │   ├── __init__.py
+    │   └── main.py
+    │
     └── stt_service/
         ├── __init__.py
         └── main.py
 ```
 
-> `latency_log.csv` is generated during STT testing and is ignored by Git.
+`audio_buffer.py` and the old HTTP `stt_adapter.py` have been removed because the active voice pipeline uses continuous streaming through `stt_stream_adapter.py`.
+
+`latency_log.csv` is generated during STT testing and should remain ignored by Git.
 
 ---
 
@@ -400,53 +434,27 @@ agni-ai/
 
 ### `livekit_poc/audio_subscriber.py`
 
-This is the current integrated voice pipeline.
-
-It:
-
-1. Connects to LiveKit.
-2. Waits for the microphone track.
-3. Connects to the streaming STT service.
-4. Sends microphone audio to Deepgram.
-5. Receives STT events.
-6. Collects completed utterances.
-7. Sends only completed utterances to OpenAI.
-8. Sends the LLM response to ElevenLabs.
-9. Publishes generated AI speech to LiveKit.
-10. Measures response latency.
-11. Suppresses microphone audio while the AI is active.
-
----
+This is the current integrated Agni voice-agent pipeline. It connects to LiveKit, receives microphone audio, streams it to STT, processes completed utterances, streams OpenAI output into ElevenLabs, publishes `voice-output`, and handles hard interruption.
 
 ### `livekit_poc/audio_publisher.py`
 
-Publishes local microphone audio into the LiveKit room.
+This is a **local development harness**, not the planned production telephony client.
 
----
+It currently uses the laptop microphone for input and laptop speakers for output. The local full-duplex setup enables AEC and keeps noise suppression and automatic gain control disabled.
+
+The publisher also subscribes to `voice-output`, so a separate `tts_listener` is not required for the integrated local POC.
 
 ### `livekit_poc/tts_listener.py`
 
-Subscribes to:
-
-```text
-voice-output
-```
-
-and plays received AI audio through the local speaker/output device.
-
----
+Standalone diagnostic listener for `voice-output`. Keep it for isolated TTS / LiveKit testing; it is not part of the normal integrated three-terminal local run.
 
 ### `livekit_poc/tts_publisher.py`
 
-Standalone ElevenLabs → LiveKit TTS test.
-
-Example:
+Standalone ElevenLabs → LiveKit TTS diagnostic.
 
 ```powershell
 python -m livekit_poc.tts_publisher "Hello from Agni AI."
 ```
-
----
 
 ### `livekit_poc/llm_poc.py`
 
@@ -456,7 +464,7 @@ Standalone OpenAI diagnostic.
 python -m livekit_poc.llm_poc "Reply only with: Agni AI ready."
 ```
 
-> **Note:** This command makes a real OpenAI API request and consumes API usage.
+This command makes a real OpenAI API request and consumes provider usage.
 
 ---
 
@@ -482,23 +490,19 @@ Activate the environment:
 conda activate agni-ai
 ```
 
-Check Python:
+Install dependencies:
 
 ```powershell
-python --version
+pip install -r requirements.txt
 ```
 
 ---
 
 ## Environment Variables
 
-Local provider configuration is stored in:
+Local credentials and provider configuration are stored in `.env.local`.
 
-```text
-.env.local
-```
-
-Example:
+Example names only — never put real credentials in this README:
 
 ```env
 DEEPGRAM_API_KEY=<your-key>
@@ -509,333 +513,230 @@ OPENAI_MAX_OUTPUT_TOKENS=120
 
 ELEVENLABS_API_KEY=<your-key>
 ELEVENLABS_VOICE_ID=<your-voice-id>
-ELEVENLABS_MODEL_ID=eleven_flash_v2_5
+ELEVENLABS_MODEL_ID=eleven_v3_conversational
 ELEVENLABS_OUTPUT_FORMAT=pcm_16000
 
 LIVEKIT_URL=<your-livekit-url>
 LIVEKIT_API_KEY=<your-livekit-api-key>
 LIVEKIT_API_SECRET=<your-livekit-api-secret>
-
 LIVEKIT_ROOM_NAME=agni-ai-voice-poc
 
-LIVEKIT_TTS_PUBLISHER_IDENTITY=agni-tts-publisher
-LIVEKIT_TTS_LISTENER_IDENTITY=agni-tts-listener
+STT_STREAM_ENDPOINT=ws://127.0.0.1:8000/api/v1/stt/stream
+AGNI_STT_LANGUAGE=english
+
+AGNI_FRONTEND_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173
 ```
 
-> **Important:** Never place real API keys, API secrets, tokens, or passwords in the README.
+The Agent API creates per-session room, participant, and language values using `AGNI_SESSION_*` environment variables for the spawned agent subprocess. These are internal session values and normally do not need to be set manually.
 
 ---
 
-## Running the Integrated Voice POC
+## Running the Integrated Local Voice POC
 
-Use four terminals.
+The normal local integrated test uses **three terminals**.
 
-### Terminal 1 — STT Service
-
-Run:
+### Terminal 1 — STT service
 
 ```powershell
-uvicorn services.stt_service.main:app
+uvicorn services.stt_service.main:app --port 8000
 ```
 
-> For voice-pipeline testing, avoid `--reload` because file changes can restart the FastAPI process and interrupt an active WebSocket connection.
+For local voice testing, avoid `--reload` because a reload can interrupt the active streaming WebSocket.
 
----
+### Terminal 2 — Integrated voice pipeline
 
-### Terminal 2 — TTS Listener
-
-Run:
+Choose a language, for example English:
 
 ```powershell
-python -m livekit_poc.tts_listener
-```
-
-Expected:
-
-```text
-AGNI AI - TTS LISTENER
-
-Connecting to LiveKit...
-Connected to LiveKit.
-
-Waiting for 'voice-output'...
-```
-
----
-
-### Terminal 3 — Integrated Voice Pipeline
-
-Run:
-
-```powershell
+$env:AGNI_STT_LANGUAGE="english"
 python -m livekit_poc.audio_subscriber
 ```
 
-Expected:
+Other supported values:
 
 ```text
-Waiting for microphone track...
-Microphone track ready.
-Connecting to streaming STT...
-Streaming STT connected.
-
-Voice pipeline ready.
-Only completed utterances are sent to OpenAI.
+hindi
+hinglish
+marathi
 ```
 
----
-
-### Terminal 4 — Microphone Publisher
-
-Run:
+### Terminal 3 — Local microphone + speaker client
 
 ```powershell
 python -m livekit_poc.audio_publisher
 ```
 
-Expected:
-
-```text
-Microphone audio published
-Track: microphone
-
-Speak into the microphone...
-```
+Expected startup includes the selected laptop microphone and speaker, LiveKit connection, microphone publishing, and local `voice-output` playback.
 
 ---
 
-## Verified End-to-End Flow
+## Running the Frontend Agent API Demo
 
-The complete local flow has been successfully verified:
+The STT service must be available on port `8000`.
 
-```text
-Microphone
-    ↓
-LiveKit
-    ↓
-Deepgram STT
-    ↓
-Final Transcript
-    ↓
-Utterance End
-    ↓
-OpenAI LLM
-    ↓
-AI Response Text
-    ↓
-ElevenLabs TTS
-    ↓
-PCM16 Audio
-    ↓
-LiveKit voice-output
-    ↓
-TTS Listener
-    ↓
-Speaker
-```
-
-Example verified interaction:
-
-```text
-User:
-Hello, Agni AI?
-
-Agni AI:
-Hello! You’ve reached Agni AI. How can I help you today?
-```
-
----
-
-## Response Latency
-
-The integrated runtime reports:
-
-```text
-Final transcript -> utterance end
-Pipeline queue delay
-LLM first text chunk
-LLM complete response
-ElevenLabs first audio chunk
-Utterance end -> first AI audio
-TTS generation/streaming
-Utterance end -> playback complete
-```
-
-One local POC run measured:
-
-| Stage | Observed Time |
-|---|---:|
-| Final transcript → utterance end | 1.015 s |
-| Pipeline queue delay | 0.001 s |
-| LLM first text chunk | 2.402 s |
-| LLM complete response | 2.683 s |
-| ElevenLabs first audio chunk | 0.556 s |
-| Utterance end → first AI audio | 3.241 s |
-| TTS generation / streaming | 2.993 s |
-| Utterance end → playback complete | 6.657 s |
-
-> These values are from one local POC run and should not be treated as production benchmarks.
-
----
-
-## Standalone TTS Test
-
-The TTS path can be tested separately:
-
-```text
-Text
- ↓
-ElevenLabs
- ↓
-PCM16
- ↓
-LiveKitAudioOutput
- ↓
-LiveKit
- ↓
-TTS Listener
- ↓
-Speaker
-```
-
-Example:
+### Terminal 1 — STT service
 
 ```powershell
-python -m livekit_poc.tts_publisher "Hello! You've reached Agni AI. How can I help you today?"
+uvicorn services.stt_service.main:app --port 8000
 ```
 
-Standalone playback has been verified as clear.
+### Terminal 2 — Agent API
+
+```powershell
+uvicorn services.agent_service.main:app --port 8001
+```
+
+Swagger/OpenAPI is available from the FastAPI service at `/docs`.
+
+When the frontend calls `POST /api/v1/agent/sessions`, the Agent API creates a unique LiveKit room/token and starts a dedicated Agni `audio_subscriber` subprocess for that session.
+
+The frontend is responsible for joining the returned LiveKit room, publishing a microphone track named `microphone`, and subscribing to the agent track named `voice-output`.
 
 ---
 
-## Echo / Feedback Handling
+## Standalone Diagnostics
 
-The integrated POC currently uses a simple suppression mechanism:
+### STT from microphone
 
-```text
-AI generating / speaking
-        ↓
-Microphone frames received
-        ↓
-Replace frames with silence
-        ↓
-Continue Deepgram connection
+```powershell
+python -m app.services.stt_service --source mic --language english
 ```
 
-This prevents the local speaker output from being immediately treated as new user speech.
+### STT from WAV file
 
-> This is a POC mechanism, not full production acoustic echo cancellation.
+```powershell
+python -m app.services.stt_service --source file --path <file.wav> --language english
+```
+
+### LLM
+
+```powershell
+python -m livekit_poc.llm_poc "Reply only with: Agni AI ready."
+```
+
+### Standalone TTS through LiveKit
+
+Run the listener:
+
+```powershell
+python -m livekit_poc.tts_listener
+```
+
+Then run the publisher:
+
+```powershell
+python -m livekit_poc.tts_publisher "Hello from Agni AI."
+```
 
 ---
 
-## Known POC Limitations
+## Response Latency Design
 
-### Barge-In
-
-True interruption is not implemented yet.
-
-Current behavior:
+Two important latency optimizations are already part of the pipeline:
 
 ```text
-AI speaking
-    ↓
-Microphone suppressed
-    ↓
-User cannot interrupt AI
+Deepgram completed speech
+        ↓
+Immediate completed-turn dispatch
+        ↓
+OpenAI starts streaming
+        ↓
+First useful text forwarded to ElevenLabs
+        ↓
+TTS can start before the LLM has finished its full response
 ```
 
-Future behavior should support:
+The runtime logs important stages including STT latency, LLM first text, LLM completion, ElevenLabs first audio, and playback completion.
+
+`latency_log.csv` records STT response timing for diagnostic use. It is not a production benchmark.
+
+---
+
+## Local Echo / Feedback Handling
+
+The local development publisher uses LiveKit `MediaDevices` for both input and output so the audio-processing path can use speaker playback as the AEC reference.
+
+Current local capture configuration:
 
 ```text
-AI speaking
-    ↓
-User starts speaking
-    ↓
-Detect interruption
-    ↓
-Cancel current playback
-    ↓
-Transcribe user
-    ↓
-Generate new response
+AEC = enabled
+Noise suppression = disabled
+High-pass filter = enabled
+Automatic gain control = disabled
 ```
 
-### Conversation History
+The microphone is **not replaced with silence while Agni speaks**. Real microphone audio continues flowing to STT so user interruption can be detected.
 
-The current OpenAI request contains only the current completed utterance.
+This is a local development setup. Production Exotel audio handling will be implemented and validated separately.
 
-No conversation history is sent yet.
+---
 
-### Occasional Integrated Playback Repetition
+## Planned Exotel Telephony Architecture
 
-Occasional word repetition/stuttering was heard during an integrated response.
-
-The same sentence played clearly through the standalone:
+The target production call flow is approximately:
 
 ```text
-ElevenLabs → LiveKit → TTS Listener
+Customer phone
+      ↓
+Exotel number
+      ↓
+Exotel media / voicebot integration
+      ↓
+Agni audio bridge
+      ↓
+STT → LLM → TTS
+      ↓
+Audio returned to Exotel
+      ↓
+Customer hears Agni
 ```
 
-path.
+The caller's phone handles its own earpiece, speaker, wired headset, Bluetooth headset, or car audio. Agni receives the telephony audio stream rather than selecting the caller's physical audio device.
 
-Therefore, the standalone TTS implementation is verified, while the integrated repetition issue remains for later diagnosis.
+Exotel integration is still pending and should be treated as a separate transport layer from the current local LiveKit development harness.
+
+---
+
+## Known Limitations
+
+### Local first-attempt barge-in
+
+Hard interruption is implemented, but first-attempt speech detection is not perfectly reliable in the laptop speaker/microphone POC. This remains a local full-duplex test limitation and should be re-evaluated on the production telephony media path.
+
+### Conversation history
+
+The current OpenAI request is stateless. Conversation/session history is not yet included in LLM context.
+
+### In-memory Agent API sessions
+
+`AgentSessionManager` stores sessions in memory and launches subprocesses directly. This is suitable for the current demo, not final production orchestration.
 
 ### Telephony
 
-The current POC uses:
-
-- local microphone publishing
-- local LiveKit room
-- local TTS listener
-
-Exotel / SIP integration is still pending.
+Exotel / PSTN integration is not implemented yet.
 
 ---
 
 ## Security
 
-The following files may contain credentials:
+Credentials belong in local environment files such as:
 
 ```text
 .env
 .env.local
 ```
 
-Generated runtime files such as:
+Never commit API keys, API secrets, passwords, tokens, or private credentials.
 
-```text
-latency_log.csv
-```
-
-must also remain untracked.
-
-Current `.gitignore` should include:
-
-```gitignore
-.env
-.env.local
-.venv/
-__pycache__/
-*.pyc
-*.wav
-audio_chunks/
-latency_log.csv
-```
+Generated/local files such as `latency_log.csv`, Python caches, local audio files, and virtual environments should remain ignored by Git.
 
 Before committing:
 
 ```powershell
 git status
+git diff --check
 git diff --cached --check
 ```
-
-Never commit:
-
-- API keys
-- API secrets
-- passwords
-- access tokens
-- private credentials
 
 ---
 
@@ -843,85 +744,39 @@ Never commit:
 
 ### Modularity
 
-Keep STT, LLM, TTS, LiveKit transport, telephony, and backend logic separate.
+Keep STT, LLM, TTS, LiveKit transport, telephony, and backend orchestration separate.
 
-### Provider Independence
+### Provider independence
 
-Use provider interfaces instead of tightly coupling application logic to vendor SDKs.
+Use provider interfaces instead of tightly coupling the pipeline to provider-specific logic.
 
-### Completed-Utterance LLM Calls
+### Completed-utterance LLM calls
 
 Never call the LLM from interim STT output.
 
-### Streaming First
+### Streaming first
 
-Use streaming where it improves real-time behavior without causing duplicate requests.
+Use streaming when it reduces latency without creating duplicate responses.
 
-### Clear Audio Contracts
+### Explicit audio contracts
 
 Keep encoding, sample rate, channel count, and frame format explicit.
 
-### Independent Testing
+### Independent testing
 
-Test STT, LLM, and TTS separately before debugging the complete pipeline.
+Test STT, LLM, TTS, LiveKit transport, and telephony paths independently before debugging the complete stack.
 
-### API Usage Awareness
+### API usage awareness
 
-Avoid unnecessary provider tests when local syntax checks or static verification are sufficient.
-
----
-
-## Backend and Database Integration
-
-The larger Agni AI system is expected to include:
-
-- FastAPI application modules
-- PostgreSQL
-- SQLAlchemy
-- Alembic
-- database models
-- authentication / application services
-- call and session management
-
-These modules should be integrated without replacing already working voice components unless compatibility has been verified.
+Prefer syntax checks, static verification, and targeted local tests before paid provider calls.
 
 ---
 
 ## Next Steps
 
-The next development phase is no longer basic LLM integration.
-
-Current next steps are:
-
-1. Diagnose occasional integrated playback repetition when required.
-2. Add true barge-in / interruption handling.
-3. Add conversation and session context.
-4. Integrate backend and database modules.
-5. Integrate Exotel / SIP telephony.
-6. Add production error handling and retries.
-7. Add call/session tracing and observability.
-8. Optimize latency after correctness is stable.
-
----
-
-## Current Milestone
-
-The repository now contains a verified local end-to-end Agni AI voice POC:
-
-```text
-LiveKit
-   ↓
-Deepgram STT
-   ↓
-OpenAI LLM
-   ↓
-ElevenLabs TTS
-   ↓
-LiveKit
-```
-
-The next phase focuses on **robustness**, **barge-in**, **backend integration**, **telephony**, and **production orchestration**.
-
----
-
-**Agni AI — Voice Architecture & Provider Layer**
+1. Finalize and commit the current multilingual + barge-in cleanup branch.
+2. Integrate Exotel telephony/media transport.
+3. Validate barge-in on the real phone-call media path.
+4. Add conversation/session context.
+5. Replace in-memory demo orchestration with production session management when required.
+6. Add automated tests for STT routing, turn dispatch, interruption, and session lifecycle.

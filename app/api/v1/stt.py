@@ -13,21 +13,27 @@ Expected incoming audio:
 User-facing language routing:
 
     English
-        -> en-IN
+        -> Flux
+        -> flux-general-en
 
     Hindi
-        -> hi
+        -> Flux Multilingual
+        -> flux-general-multi
+        -> language_hint=["hi"]
 
     Hinglish
-        -> hi
+        -> Flux Multilingual
+        -> flux-general-multi
+        -> language_hint=["en", "hi"]
 
     Marathi
-        -> mr
+        -> Nova-3
+        -> language="mr"
 
 Optional manual/debug mode:
 
     multi
-        -> multi
+        -> Nova-3 legacy/debug mode
 
 Examples:
 
@@ -39,7 +45,9 @@ Examples:
 
     /api/v1/stt/stream?language=marathi
 
-Canonical Deepgram language values are also accepted:
+Language aliases are also accepted:
+
+    /api/v1/stt/stream?language=en
 
     /api/v1/stt/stream?language=en-IN
 
@@ -113,10 +121,11 @@ _SENTINEL = object()
 # ===========================================================================
 
 SUPPORTED_LANGUAGE_MODES = {
-    "en-IN",
-    "hi",
+    "english",
+    "hindi",
+    "hinglish",
+    "marathi",
     "multi",
-    "mr",
 }
 
 
@@ -172,25 +181,22 @@ async def stt_stream(
 
     language_aliases = {
         # English
-        "en": "en-IN",
-        "en-in": "en-IN",
-        "english": "en-IN",
+        "en": "english",
+        "en-in": "english",
+        "english": "english",
 
         # Hindi
-        "hi": "hi",
-        "hindi": "hi",
+        "hi": "hindi",
+        "hindi": "hindi",
 
         # Hinglish
-        #
-        # Agni testing showed Hinglish performs
-        # better using Deepgram Hindi mode.
-        "hinglish": "hi",
+        "hinglish": "hinglish",
 
         # Marathi
-        "mr": "mr",
-        "marathi": "mr",
+        "mr": "marathi",
+        "marathi": "marathi",
 
-        # Optional multilingual/debug mode
+        # Optional legacy/debug mode
         "multi": "multi",
     }
 
