@@ -87,9 +87,12 @@ logging.getLogger(
 # Room / participant configuration
 # ---------------------------------------------------------------------------
 
-ROOM_NAME = os.getenv(
-    "LIVEKIT_ROOM_NAME",
-    "agni-ai-voice-poc",
+ROOM_NAME = (
+    os.getenv("AGNI_SESSION_ROOM_NAME")
+    or os.getenv(
+        "LIVEKIT_ROOM_NAME",
+        "agni-ai-voice-poc",
+    )
 )
 
 PARTICIPANT_IDENTITY = os.getenv(

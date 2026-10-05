@@ -228,6 +228,7 @@ class AgentSessionManager:
     async def create_session(
         self,
         language: str,
+        system_prompt: str | None = None,
     ) -> tuple[
         AgentSession,
         str,
@@ -311,6 +312,10 @@ class AgentSessionManager:
         process_env[
             "AGNI_SESSION_LANGUAGE"
         ] = language
+
+        process_env[
+            "AGNI_SESSION_SYSTEM_PROMPT"
+        ] = system_prompt or ""
 
         process_env[
             "PYTHONUNBUFFERED"
