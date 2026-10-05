@@ -617,7 +617,6 @@ async def process_ai_responses(
             response_text = "".join(
                 response_chunks
             ).strip()
-
             if not response_text:
                 print(
                     "LLM returned an empty response."
@@ -975,6 +974,11 @@ async def receive_stt_events(
                 "transcript",
                 "",
             ).strip()
+            if transcript:
+                final_transcript_parts.append(
+                    transcript
+                )
+                last_final_at = time.perf_counter()
 
             if (
                 transcript

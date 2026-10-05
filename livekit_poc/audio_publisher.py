@@ -33,11 +33,13 @@ as the AEC reverse/reference stream.
 """
 
 import asyncio
+import json
 import logging
 import os
+import urllib.request
 
 from dotenv import load_dotenv
-from livekit import api, rtc
+from livekit import rtc
 
 
 # ---------------------------------------------------------------------------
@@ -87,68 +89,40 @@ logging.getLogger(
 # Room / participant configuration
 # ---------------------------------------------------------------------------
 
-ROOM_NAME = (
-    os.getenv("AGNI_SESSION_ROOM_NAME")
-    or os.getenv(
-        "LIVEKIT_ROOM_NAME",
-        "agni-ai-voice-poc",
-    )
-)
-
-PARTICIPANT_IDENTITY = os.getenv(
-    "LIVEKIT_PARTICIPANT_IDENTITY",
-    "agni-audio-publisher",
+AGENT_API_URL = os.getenv(
+    "AGNI_AGENT_API_URL",
+    "http://127.0.0.1:8001",
 )
 
 
-# ---------------------------------------------------------------------------
-# LiveKit authentication
-# ---------------------------------------------------------------------------
+def create_agent_session() -> tuple[str, str]:
+    payload = json.dumps(
+        {
+            "language": "english",
+            "system_prompt": None,
+        }
+    ).encode("utf-8")
 
-def create_access_token() -> str:
-    """
-    Create a LiveKit access token for the audio publisher.
-
-    The participant can:
-        - join the configured room
-        - publish audio
-        - subscribe to other tracks
-    """
-
-    api_key = os.getenv(
-        "LIVEKIT_API_KEY"
+    request = urllib.request.Request(
+        f"{AGENT_API_URL}/api/v1/agent/sessions",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+        },
+        method="POST",
     )
 
-    api_secret = os.getenv(
-        "LIVEKIT_API_SECRET"
-    )
-
-    if not api_key or not api_secret:
-        raise RuntimeError(
-            "LIVEKIT_API_KEY or LIVEKIT_API_SECRET is missing "
-            "from .env.local"
+    with urllib.request.urlopen(
+        request,
+        timeout=10,
+    ) as response:
+        data = json.loads(
+            response.read().decode("utf-8")
         )
 
     return (
-        api.AccessToken(
-            api_key,
-            api_secret,
-        )
-        .with_identity(
-            PARTICIPANT_IDENTITY
-        )
-        .with_name(
-            "Agni AI Audio Publisher"
-        )
-        .with_grants(
-            api.VideoGrants(
-                room_join=True,
-                room=ROOM_NAME,
-                can_publish=True,
-                can_subscribe=True,
-            )
-        )
-        .to_jwt()
+        data["livekit"]["room_name"],
+        data["livekit"]["token"],
     )
 
 
@@ -205,7 +179,7 @@ def select_laptop_microphone(
             )
         ).lower()
 
-        if "microphone array" in name:
+        if "microphone" in name:
             print(
                 "Laptop microphone selected:"
             )
@@ -433,12 +407,24 @@ async def main() -> None:
     # -----------------------------------------------------------------------
 
     print(
+        "Creating Agni AI session..."
+    )
+
+    session_room_name, session_token = (
+        create_agent_session()
+    )
+
+    print(
+        f"Session created: {session_room_name}"
+    )
+
+    print(
         "Connecting to LiveKit..."
     )
 
     await room.connect(
         livekit_url,
-        create_access_token(),
+        session_token,
     )
 
     print(
