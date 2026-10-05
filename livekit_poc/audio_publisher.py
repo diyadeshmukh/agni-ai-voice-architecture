@@ -104,7 +104,7 @@ def create_agent_session() -> tuple[str, str]:
     ).encode("utf-8")
 
     request = urllib.request.Request(
-        f"{AGENT_API_URL}/api/v1/agent/sessions",
+        f"{AGENT_API_URL}/api/v1/sessions",
         data=payload,
         headers={
             "Content-Type": "application/json",

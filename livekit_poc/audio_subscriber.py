@@ -547,53 +547,136 @@ async def process_ai_responses(
                 )
             )
 
-            async for audio_chunk in tts_stream:
+            async def consume_tts_audio() -> None:
+                nonlocal first_tts_chunk_at
+                nonlocal chunk_count
+                nonlocal total_audio_bytes
 
-                if interrupt_event.is_set():
-                    break
+                async for audio_chunk in tts_stream:
 
-                if first_tts_chunk_at is None:
-                    first_tts_chunk_at = (
-                        time.perf_counter()
+                    if interrupt_event.is_set():
+                        return
+
+                    if first_tts_chunk_at is None:
+                        first_tts_chunk_at = (
+                            time.perf_counter()
+                        )
+
+                    chunk_count += 1
+                    total_audio_bytes += len(
+                        audio_chunk.data
                     )
-                chunk_count += 1
-                total_audio_bytes += len(
-                    audio_chunk.data
-                )
-                await audio_output.send_chunk(
-                    audio_chunk
-                )
-            tts_generation_completed_at = (
-                time.perf_counter()
+
+                    await audio_output.send_chunk(
+                        audio_chunk
+                    )
+
+            # Run ElevenLabs audio consumption and the
+            # barge-in signal concurrently.
+            #
+            # This prevents the response worker from being
+            # stuck inside ElevenLabs websocket.recv() after
+            # the user has already interrupted Agni.
+
+            tts_task = asyncio.create_task(
+                consume_tts_audio()
             )
 
-            # -------------------------------------------------------
-            # Confirmed barge-in during generation
-            # -------------------------------------------------------
+            interrupt_wait_task = asyncio.create_task(
+                interrupt_event.wait()
+            )
 
-            if interrupt_event.is_set():
-                if (
-                    llm_task is not None
-                    and not llm_task.done()
-                ):
-                    llm_task.cancel()
+            try:
+
+                await asyncio.wait(
+                    {
+                        tts_task,
+                        interrupt_wait_task,
+                    },
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                # ---------------------------------------------------
+                # Confirmed barge-in during generation
+                # ---------------------------------------------------
+
+                if interrupt_event.is_set():
+
+                    # Stop OpenAI first. Its finally block places
+                    # the end marker into text_queue so the
+                    # ElevenLabs sender can finish cleanly.
+
+                    if (
+                        llm_task is not None
+                        and not llm_task.done()
+                    ):
+                        llm_task.cancel()
+
+                        await asyncio.gather(
+                            llm_task,
+                            return_exceptions=True,
+                        )
+
+                    llm_task = None
+
+                    # Stop waiting for additional ElevenLabs audio.
+
+                    if not tts_task.done():
+                        tts_task.cancel()
+
                     await asyncio.gather(
-                        llm_task,
+                        tts_task,
                         return_exceptions=True,
                     )
-                llm_task = None
-                # The async-for loop has already stopped, so the
-                # ElevenLabs generator can now be closed cleanly.
-                await tts_stream.aclose()
-                # Clear once more in case capture_frame was already
-                # in progress when hard interruption happened.
-                audio_output.interrupt()
-                print()
-                print(
-                    "[BARGE-IN] "
-                    "Current AI response cancelled."
+
+                    # Clear again for the capture-frame race case.
+
+                    audio_output.interrupt()
+
+                    print()
+                    print(
+                        "[BARGE-IN] "
+                        "Current AI response cancelled."
+                    )
+
+                    continue
+
+                # ---------------------------------------------------
+                # TTS completed normally
+                # ---------------------------------------------------
+
+                interrupt_wait_task.cancel()
+
+                await asyncio.gather(
+                    interrupt_wait_task,
+                    return_exceptions=True,
                 )
-                continue
+
+                # Propagate any real ElevenLabs/TTS error.
+
+                await tts_task
+
+                tts_generation_completed_at = (
+                    time.perf_counter()
+                )
+
+            finally:
+
+                # Do not leave helper tasks running if the whole
+                # voice pipeline is shutting down or fails.
+
+                for task in (
+                    tts_task,
+                    interrupt_wait_task,
+                ):
+                    if not task.done():
+                        task.cancel()
+
+                await asyncio.gather(
+                    tts_task,
+                    interrupt_wait_task,
+                    return_exceptions=True,
+                )
 
             # -------------------------------------------------------
             # Make sure OpenAI completed successfully

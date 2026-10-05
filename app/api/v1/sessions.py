@@ -1,0 +1,223 @@
+"""
+Agni AI - Voice Session API
+
+Frontend-facing endpoints for creating, inspecting,
+and ending Agni AI realtime voice sessions.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    status,
+)
+
+from pydantic import (
+    BaseModel,
+    field_validator,
+)
+
+from app.services.agent_session_manager import (
+    AgentSession,
+    AgentSessionManager,
+    SUPPORTED_AGENT_LANGUAGES,
+)
+
+
+class CreateSessionRequest(BaseModel):
+    language: str = "english"
+    system_prompt: str | None = None
+
+    @field_validator("language")
+    @classmethod
+    def validate_language(
+        cls,
+        value: str,
+    ) -> str:
+
+        normalized = (
+            value
+            .strip()
+            .lower()
+        )
+
+        if (
+            normalized
+            not in SUPPORTED_AGENT_LANGUAGES
+        ):
+            raise ValueError(
+                "language must be one of: "
+                "english, hindi, "
+                "hinglish, marathi"
+            )
+
+        return normalized
+
+
+class LiveKitConnectionResponse(BaseModel):
+    url: str
+    room_name: str
+    token: str
+
+
+class TrackContractResponse(BaseModel):
+    microphone: str
+    agent_audio: str
+
+
+class CreateSessionResponse(BaseModel):
+    session_id: str
+    status: str
+    language: str
+
+    livekit: LiveKitConnectionResponse
+    tracks: TrackContractResponse
+
+    created_at: datetime
+
+
+class SessionResponse(BaseModel):
+    session_id: str
+    status: str
+    language: str
+
+    room_name: str
+
+    frontend_identity: str
+    agent_identity: str
+
+    created_at: datetime
+    ended_at: datetime | None
+
+
+class EndSessionResponse(BaseModel):
+    session_id: str
+    status: str
+
+
+def _session_response(
+    session: AgentSession,
+) -> SessionResponse:
+
+    session.refresh_status()
+
+    return SessionResponse(
+        session_id=session.session_id,
+        status=session.status,
+        language=session.language,
+        room_name=session.room_name,
+        frontend_identity=(
+            session.frontend_identity
+        ),
+        agent_identity=(
+            session.agent_identity
+        ),
+        created_at=session.created_at,
+        ended_at=session.ended_at,
+    )
+
+
+def create_sessions_router(
+    session_manager: AgentSessionManager,
+) -> APIRouter:
+
+    router = APIRouter(
+        prefix="/sessions",
+        tags=["sessions"],
+    )
+
+    @router.post(
+        "",
+        response_model=CreateSessionResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def create_session(
+        request: CreateSessionRequest,
+    ):
+
+        try:
+            (
+                session,
+                frontend_token,
+            ) = await session_manager.create_session(
+                request.language,
+                request.system_prompt,
+            )
+
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=str(exc),
+            ) from exc
+
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=str(exc),
+            ) from exc
+
+        return CreateSessionResponse(
+            session_id=session.session_id,
+            status=session.status,
+            language=session.language,
+            livekit=LiveKitConnectionResponse(
+                url=session_manager.livekit_url,
+                room_name=session.room_name,
+                token=frontend_token,
+            ),
+            tracks=TrackContractResponse(
+                microphone="microphone",
+                agent_audio="voice-output",
+            ),
+            created_at=session.created_at,
+        )
+
+    @router.get(
+        "/{session_id}",
+        response_model=SessionResponse,
+    )
+    async def get_session(
+        session_id: str,
+    ):
+
+        session = session_manager.get_session(
+            session_id
+        )
+
+        if session is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Agent session not found",
+            )
+
+        return _session_response(
+            session
+        )
+
+    @router.delete(
+        "/{session_id}",
+        response_model=EndSessionResponse,
+    )
+    async def end_session(
+        session_id: str,
+    ):
+
+        session = await session_manager.end_session(
+            session_id
+        )
+
+        if session is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Agent session not found",
+            )
+
+        return EndSessionResponse(
+            session_id=session.session_id,
+            status=session.status,
+        )
+
+    return router
