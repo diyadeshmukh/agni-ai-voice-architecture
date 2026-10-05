@@ -31,9 +31,31 @@ load_dotenv(
 )
 
 
-from app.api.v1.agent import (  # noqa: E402
-    router as agent_router,
-    session_manager,
+from app.api.v1.catalog import (  # noqa: E402
+    router as catalog_router,
+)
+
+from app.api.v1.health import (  # noqa: E402
+    create_health_router,
+)
+
+from app.api.v1.sessions import (  # noqa: E402
+    create_sessions_router,
+)
+
+from app.services.agent_session_manager import (  # noqa: E402
+    AgentSessionManager,
+)
+
+
+session_manager = AgentSessionManager()
+
+sessions_router = create_sessions_router(
+    session_manager
+)
+
+health_router = create_health_router(
+    session_manager
 )
 
 
@@ -104,7 +126,17 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 
 app.include_router(
-    agent_router,
+    catalog_router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    sessions_router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    health_router,
     prefix="/api/v1",
 )
 

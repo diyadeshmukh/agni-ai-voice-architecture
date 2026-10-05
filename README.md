@@ -12,11 +12,12 @@ The current repository contains:
 
 - streaming Speech-to-Text (STT)
 - OpenAI LLM integration
+- configurable per-session LLM system prompt
 - streaming ElevenLabs Text-to-Speech (TTS)
 - LiveKit audio transport
 - hard barge-in / interruption support
 - multilingual STT routing
-- frontend-facing agent session APIs
+- frontend-facing configuration and session APIs
 - local development and diagnostic POCs
 
 The production telephony layer is planned around Exotel. Exotel integration is not implemented yet.
@@ -46,7 +47,7 @@ Completed Utterance
  ElevenLabs TTS
         │
         ▼
- Streaming PCM Audio
+Streaming PCM Audio
         │
         ▼
      LiveKit
@@ -72,13 +73,14 @@ Interim STT transcripts are displayed for diagnostics but are **not sent to Open
 | Interim transcripts | ✅ Working | Diagnostic only; never sent to OpenAI |
 | Completed utterance dispatch | ✅ Working | `speech_final` fast path with `utterance_end` fallback |
 | OpenAI LLM | ✅ Working | Streaming response generation |
+| System prompt configuration | ✅ Working | Optional per-session LLM instructions |
 | ElevenLabs TTS | ✅ Working | Streaming Text-to-Dialogue WebSocket |
 | OpenAI → ElevenLabs overlap | ✅ Working | TTS can begin before LLM completion |
 | LiveKit AI audio output | ✅ Working | Publishes `voice-output` track |
 | Local speaker playback | ✅ Working | `audio_publisher.py` plays `voice-output` |
 | Hard barge-in | ✅ Core implemented | Cancels active LLM/TTS and clears queued AI audio |
 | Local first-attempt barge-in | ⚠️ POC limitation | Detection can be inconsistent with laptop speaker/microphone acoustics |
-| Agent session API | ✅ Demo-ready | Create, inspect, and stop agent sessions |
+| Agent API | ✅ Working | Language catalog, health, and session lifecycle APIs |
 | Conversation history | 🚧 Pending | Current LLM request is stateless |
 | Exotel telephony | 🚧 Planned | Production phone-call transport not implemented yet |
 | Production orchestration | 🚧 Planned | Persistent sessions/workers/storage can be added later |
@@ -115,7 +117,7 @@ Interim STT transcripts are displayed for diagnostics but are **not sent to Open
                                 ▼
                     ┌───────────────────────┐
                     │     ElevenLabs TTS    │
-                    │   Streaming PCM16     │
+                    │    Streaming PCM16    │
                     └───────────┬───────────┘
                                 │
                                 ▼
@@ -265,6 +267,20 @@ OPENAI_MAX_OUTPUT_TOKENS=120
 
 OpenAI text is streamed toward ElevenLabs rather than waiting for the entire LLM response to finish first.
 
+### Per-session system prompt
+
+The Agent API supports an optional `system_prompt` when creating a voice session.
+
+The value is passed into the dedicated session subprocess through:
+
+```text
+AGNI_SESSION_SYSTEM_PROMPT
+```
+
+The integrated voice pipeline then initializes the OpenAI provider with that prompt as its instructions.
+
+If no session-specific prompt is provided, the existing default LLM behavior is used.
+
 ---
 
 ## TTS Architecture
@@ -307,9 +323,9 @@ The current provider uses the ElevenLabs WebSocket directly through the `websock
 
 ---
 
-## Frontend Agent Session API
+## Frontend Agent API
 
-The frontend-facing Agent API is demo-ready.
+The frontend-facing Agent API exposes configuration discovery, session lifecycle, and service health endpoints.
 
 Run it with:
 
@@ -317,29 +333,19 @@ Run it with:
 uvicorn services.agent_service.main:app --port 8001
 ```
 
-The three main session endpoints are:
+Swagger/OpenAPI is available at:
+
+```text
+http://127.0.0.1:8001/docs
+```
+
+### Configuration catalog
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `POST` | `/api/v1/agent/sessions` | Start an Agni agent session |
-| `GET` | `/api/v1/agent/sessions/{session_id}` | Read session status |
-| `DELETE` | `/api/v1/agent/sessions/{session_id}` | Stop the agent session |
+| `GET` | `/api/v1/catalog/languages` | List supported agent languages |
 
-Health endpoint:
-
-```text
-GET /api/v1/agent/health
-```
-
-Example create request:
-
-```json
-{
-  "language": "english"
-}
-```
-
-Supported session languages:
+Current supported languages:
 
 ```text
 english
@@ -348,7 +354,73 @@ hinglish
 marathi
 ```
 
-A create-session response includes:
+Example response:
+
+```json
+{
+  "languages": [
+    {
+      "id": "english",
+      "label": "English"
+    },
+    {
+      "id": "hindi",
+      "label": "Hindi"
+    },
+    {
+      "id": "hinglish",
+      "label": "Hinglish"
+    },
+    {
+      "id": "marathi",
+      "label": "Marathi"
+    }
+  ]
+}
+```
+
+### Session runtime
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/v1/sessions` | Start an Agni voice session |
+| `GET` | `/api/v1/sessions/{session_id}` | Read session status |
+| `DELETE` | `/api/v1/sessions/{session_id}` | Stop the session |
+
+Example create request:
+
+```json
+{
+  "language": "english",
+  "system_prompt": "You are a helpful customer support assistant."
+}
+```
+
+`system_prompt` is optional.
+
+The selected language is validated by the Agent API before a session is created.
+
+If an unsupported language is supplied, request validation fails before the voice-agent subprocess is started.
+
+When a session is created, the Agent API:
+
+1. generates a unique session ID
+2. generates a unique LiveKit room
+3. creates unique frontend and agent participant identities
+4. creates a short-lived frontend LiveKit token
+5. starts a dedicated `livekit_poc.audio_subscriber` subprocess
+6. passes per-session configuration to that subprocess
+
+Per-session configuration currently includes:
+
+```text
+AGNI_SESSION_ROOM_NAME
+AGNI_SESSION_PARTICIPANT_IDENTITY
+AGNI_SESSION_LANGUAGE
+AGNI_SESSION_SYSTEM_PROMPT
+```
+
+A successful create-session response includes:
 
 - `session_id`
 - current session `status`
@@ -358,8 +430,47 @@ A create-session response includes:
 - short-lived frontend participant token
 - expected microphone track name: `microphone`
 - expected agent audio track name: `voice-output`
+- session creation time
 
-The current `AgentSessionManager` keeps session state in memory and starts one `livekit_poc.audio_subscriber` subprocess per session. This is intentionally simple for the current demo and can later be replaced by persistent production orchestration.
+Example response shape:
+
+```json
+{
+  "session_id": "876ff8bdca15475b836288049ab9a848",
+  "status": "active",
+  "language": "english",
+  "livekit": {
+    "url": "wss://...",
+    "room_name": "agni-session-876ff8bdca15",
+    "token": "..."
+  },
+  "tracks": {
+    "microphone": "microphone",
+    "agent_audio": "voice-output"
+  },
+  "created_at": "..."
+}
+```
+
+### Health
+
+```text
+GET /api/v1/health
+```
+
+Example response:
+
+```json
+{
+  "status": "ok",
+  "service": "Agni Agent API",
+  "livekit_configured": true
+}
+```
+
+`AgentSessionManager` currently keeps active session state in memory and launches one `audio_subscriber` subprocess per voice session.
+
+Persistent or distributed production session orchestration is not implemented yet.
 
 ---
 
@@ -381,7 +492,9 @@ agni-ai/
 │   │   ├── __init__.py
 │   │   └── v1/
 │   │       ├── __init__.py
-│   │       ├── agent.py
+│   │       ├── catalog.py
+│   │       ├── health.py
+│   │       ├── sessions.py
 │   │       └── stt.py
 │   │
 │   ├── core/
@@ -426,6 +539,14 @@ agni-ai/
 
 `audio_buffer.py` and the old HTTP `stt_adapter.py` have been removed because the active voice pipeline uses continuous streaming through `stt_stream_adapter.py`.
 
+The old combined `app/api/v1/agent.py` API module has also been removed. Frontend-facing API responsibilities are now separated into:
+
+```text
+catalog.py
+health.py
+sessions.py
+```
+
 `latency_log.csv` is generated during STT testing and should remain ignored by Git.
 
 ---
@@ -434,19 +555,29 @@ agni-ai/
 
 ### `livekit_poc/audio_subscriber.py`
 
-This is the current integrated Agni voice-agent pipeline. It connects to LiveKit, receives microphone audio, streams it to STT, processes completed utterances, streams OpenAI output into ElevenLabs, publishes `voice-output`, and handles hard interruption.
+This is the current integrated Agni voice-agent pipeline.
+
+It connects to LiveKit, receives microphone audio, streams it to STT, processes completed utterances, streams OpenAI output into ElevenLabs, publishes `voice-output`, and handles hard interruption.
+
+For frontend-created sessions, it receives session-specific configuration through `AGNI_SESSION_*` environment variables.
 
 ### `livekit_poc/audio_publisher.py`
 
 This is a **local development harness**, not the planned production telephony client.
 
-It currently uses the laptop microphone for input and laptop speakers for output. The local full-duplex setup enables AEC and keeps noise suppression and automatic gain control disabled.
+It currently uses the laptop microphone for input and laptop speakers for output.
+
+The local full-duplex setup enables AEC and keeps noise suppression and automatic gain control disabled.
 
 The publisher also subscribes to `voice-output`, so a separate `tts_listener` is not required for the integrated local POC.
 
+When `AGNI_SESSION_ROOM_NAME` is available, the publisher can use the session-specific room name. Otherwise it falls back to the normal local `LIVEKIT_ROOM_NAME` configuration.
+
 ### `livekit_poc/tts_listener.py`
 
-Standalone diagnostic listener for `voice-output`. Keep it for isolated TTS / LiveKit testing; it is not part of the normal integrated three-terminal local run.
+Standalone diagnostic listener for `voice-output`.
+
+Keep it for isolated TTS / LiveKit testing; it is not part of the normal integrated three-terminal local run.
 
 ### `livekit_poc/tts_publisher.py`
 
@@ -527,7 +658,18 @@ AGNI_STT_LANGUAGE=english
 AGNI_FRONTEND_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173
 ```
 
-The Agent API creates per-session room, participant, and language values using `AGNI_SESSION_*` environment variables for the spawned agent subprocess. These are internal session values and normally do not need to be set manually.
+The Agent API passes per-session room, participant, language, and system-prompt configuration to the spawned agent subprocess using `AGNI_SESSION_*` environment variables.
+
+Current internal session variables include:
+
+```text
+AGNI_SESSION_ROOM_NAME
+AGNI_SESSION_PARTICIPANT_IDENTITY
+AGNI_SESSION_LANGUAGE
+AGNI_SESSION_SYSTEM_PROMPT
+```
+
+These are internal session values and normally do not need to be set manually.
 
 ---
 
@@ -549,6 +691,7 @@ Choose a language, for example English:
 
 ```powershell
 $env:AGNI_STT_LANGUAGE="english"
+
 python -m livekit_poc.audio_subscriber
 ```
 
@@ -570,9 +713,9 @@ Expected startup includes the selected laptop microphone and speaker, LiveKit co
 
 ---
 
-## Running the Frontend Agent API Demo
+## Running the Frontend Agent API
 
-The STT service must be available on port `8000`.
+The STT service must be available on port `8000` when a real voice session is created.
 
 ### Terminal 1 — STT service
 
@@ -586,11 +729,48 @@ uvicorn services.stt_service.main:app --port 8000
 uvicorn services.agent_service.main:app --port 8001
 ```
 
-Swagger/OpenAPI is available from the FastAPI service at `/docs`.
+Swagger/OpenAPI is available at:
 
-When the frontend calls `POST /api/v1/agent/sessions`, the Agent API creates a unique LiveKit room/token and starts a dedicated Agni `audio_subscriber` subprocess for that session.
+```text
+http://127.0.0.1:8001/docs
+```
 
-The frontend is responsible for joining the returned LiveKit room, publishing a microphone track named `microphone`, and subscribing to the agent track named `voice-output`.
+Current frontend-facing endpoints:
+
+```text
+GET    /api/v1/catalog/languages
+
+POST   /api/v1/sessions
+GET    /api/v1/sessions/{session_id}
+DELETE /api/v1/sessions/{session_id}
+
+GET    /api/v1/health
+```
+
+When the frontend calls `POST /api/v1/sessions`, the Agent API creates a unique LiveKit room/token and starts a dedicated Agni `audio_subscriber` subprocess for that session.
+
+The frontend is responsible for:
+
+```text
+connecting to the returned LiveKit room
+        ↓
+publishing microphone track "microphone"
+        ↓
+receiving/subscribing to "voice-output"
+        ↓
+playing Agni's generated audio
+```
+
+The Agent API never exposes backend provider secrets such as:
+
+```text
+OPENAI_API_KEY
+DEEPGRAM_API_KEY
+ELEVENLABS_API_KEY
+LIVEKIT_API_SECRET
+```
+
+Only the temporary frontend LiveKit participant token is returned for room access.
 
 ---
 
@@ -665,7 +845,9 @@ High-pass filter = enabled
 Automatic gain control = disabled
 ```
 
-The microphone is **not replaced with silence while Agni speaks**. Real microphone audio continues flowing to STT so user interruption can be detected.
+The microphone is **not replaced with silence while Agni speaks**.
+
+Real microphone audio continues flowing to STT so user interruption can be detected.
 
 This is a local development setup. Production Exotel audio handling will be implemented and validated separately.
 
@@ -691,7 +873,9 @@ Audio returned to Exotel
 Customer hears Agni
 ```
 
-The caller's phone handles its own earpiece, speaker, wired headset, Bluetooth headset, or car audio. Agni receives the telephony audio stream rather than selecting the caller's physical audio device.
+The caller's phone handles its own earpiece, speaker, wired headset, Bluetooth headset, or car audio.
+
+Agni receives the telephony audio stream rather than selecting the caller's physical audio device.
 
 Exotel integration is still pending and should be treated as a separate transport layer from the current local LiveKit development harness.
 
@@ -701,19 +885,31 @@ Exotel integration is still pending and should be treated as a separate transpor
 
 ### Local first-attempt barge-in
 
-Hard interruption is implemented, but first-attempt speech detection is not perfectly reliable in the laptop speaker/microphone POC. This remains a local full-duplex test limitation and should be re-evaluated on the production telephony media path.
+Hard interruption is implemented, but first-attempt speech detection is not perfectly reliable in the laptop speaker/microphone POC.
+
+This remains a local full-duplex test limitation and should be re-evaluated on the production telephony media path.
 
 ### Conversation history
 
-The current OpenAI request is stateless. Conversation/session history is not yet included in LLM context.
+The current OpenAI request is stateless.
+
+Conversation/session history is not yet included in LLM context.
 
 ### In-memory Agent API sessions
 
-`AgentSessionManager` stores sessions in memory and launches subprocesses directly. This is suitable for the current demo, not final production orchestration.
+`AgentSessionManager` stores active sessions in memory and launches subprocesses directly.
+
+This is sufficient for the current implementation but is not final production orchestration.
 
 ### Telephony
 
 Exotel / PSTN integration is not implemented yet.
+
+### Voice configuration
+
+Selectable male/female voices and accent configuration are not implemented yet.
+
+These should only be exposed through the API after the underlying TTS voice-selection functionality is implemented and tested.
 
 ---
 
@@ -770,13 +966,21 @@ Test STT, LLM, TTS, LiveKit transport, and telephony paths independently before 
 
 Prefer syntax checks, static verification, and targeted local tests before paid provider calls.
 
+### API scope
+
+Expose APIs for features that are actually implemented.
+
+Do not add speculative endpoints for future product features until the underlying functionality exists.
+
 ---
 
 ## Next Steps
 
-1. Finalize and commit the current multilingual + barge-in cleanup branch.
-2. Integrate Exotel telephony/media transport.
-3. Validate barge-in on the real phone-call media path.
-4. Add conversation/session context.
-5. Replace in-memory demo orchestration with production session management when required.
-6. Add automated tests for STT routing, turn dispatch, interruption, and session lifecycle.
+1. Finalize the frontend Agent API structure.
+2. Add configurable voice selection and accent support.
+3. Expose implemented voice/accent options through the configuration catalog.
+4. Integrate Exotel telephony/media transport.
+5. Validate barge-in on the real phone-call media path.
+6. Add conversation/session context.
+7. Replace in-memory orchestration when production scaling requires it.
+8. Add automated tests for API validation, STT routing, turn dispatch, interruption, and session lifecycle.
