@@ -155,7 +155,16 @@ REQUESTED_STT_LANGUAGE = (
     )
 ).strip()
 
-SYSTEM_PROMPT = os.getenv("AGNI_SESSION_SYSTEM_PROMPT") or None
+SYSTEM_PROMPT = os.getenv(
+    "AGNI_SESSION_SYSTEM_PROMPT"
+) or None
+
+SESSION_VOICE_ID = (
+    os.getenv(
+        "AGNI_SESSION_VOICE_ID"
+    )
+    or None
+)
 
 STT_LANGUAGE_ALIASES = {
     # English
@@ -1365,7 +1374,9 @@ async def main() -> None:
     print(
         "Initializing ElevenLabs TTS provider..."
     )
-    tts_provider = ElevenLabsTTSProvider()
+    tts_provider = ElevenLabsTTSProvider(
+        voice_id=SESSION_VOICE_ID,
+    )
     print(
         "TTS provider ready."
     )

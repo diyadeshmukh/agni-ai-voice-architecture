@@ -29,6 +29,7 @@ from app.services.agent_session_manager import (
 
 class CreateSessionRequest(BaseModel):
     language: str = "english"
+    voice_id: str | None = None
     system_prompt: str | None = None
 
     @field_validator("language")
@@ -56,6 +57,29 @@ class CreateSessionRequest(BaseModel):
 
         return normalized
 
+    @field_validator("voice_id")
+    @classmethod
+    def validate_voice_id(
+        cls,
+        value: str | None,
+    ) -> str | None:
+
+        if value is None:
+            return None
+
+        normalized = (
+            value
+            .strip()
+            .lower()
+        )
+
+        if not normalized:
+            raise ValueError(
+                "voice_id must not be empty"
+            )
+
+        return normalized
+
 
 class LiveKitConnectionResponse(BaseModel):
     url: str
@@ -72,6 +96,7 @@ class CreateSessionResponse(BaseModel):
     session_id: str
     status: str
     language: str
+    voice_id: str | None
 
     livekit: LiveKitConnectionResponse
     tracks: TrackContractResponse
@@ -83,6 +108,7 @@ class SessionResponse(BaseModel):
     session_id: str
     status: str
     language: str
+    voice_id: str | None
 
     room_name: str
 
@@ -108,6 +134,7 @@ def _session_response(
         session_id=session.session_id,
         status=session.status,
         language=session.language,
+        voice_id=session.voice_id,
         room_name=session.room_name,
         frontend_identity=(
             session.frontend_identity
@@ -143,13 +170,14 @@ def create_sessions_router(
                 session,
                 frontend_token,
             ) = await session_manager.create_session(
-                request.language,
-                request.system_prompt,
+                language=request.language,
+                system_prompt=request.system_prompt,
+                voice_id=request.voice_id,
             )
 
         except ValueError as exc:
             raise HTTPException(
-                status_code=400,
+                status_code=422,
                 detail=str(exc),
             ) from exc
 
@@ -163,6 +191,7 @@ def create_sessions_router(
             session_id=session.session_id,
             status=session.status,
             language=session.language,
+            voice_id=session.voice_id,
             livekit=LiveKitConnectionResponse(
                 url=session_manager.livekit_url,
                 room_name=session.room_name,

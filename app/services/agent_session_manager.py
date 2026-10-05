@@ -42,6 +42,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 from livekit import api
 
+from app.voice.voice_registry import (
+    get_voice_profile,
+)
+
 
 load_dotenv(
     ".env.local",
@@ -72,6 +76,7 @@ class AgentSession:
 
     session_id: str
     language: str
+    voice_id: str | None
 
     room_name: str
 
@@ -229,6 +234,7 @@ class AgentSessionManager:
         self,
         language: str,
         system_prompt: str | None = None,
+        voice_id: str | None = None,
     ) -> tuple[
         AgentSession,
         str,
@@ -258,6 +264,43 @@ class AgentSessionManager:
                 "Use english, hindi, "
                 "hinglish, or marathi."
             )
+
+        selected_voice_id: str | None = None
+        provider_voice_id: str | None = None
+
+        if voice_id is not None:
+
+            voice = get_voice_profile(
+                voice_id
+            )
+
+            if voice is None:
+                raise ValueError(
+                    "Unknown voice_id."
+                )
+
+            if language not in voice.languages:
+                raise ValueError(
+                    "Selected voice does not support "
+                    f"language '{language}'."
+                )
+
+            if voice.provider != "elevenlabs":
+                raise ValueError(
+                    "Selected voice provider is not "
+                    "supported by the current TTS runtime."
+                )
+
+            provider_voice_id = (
+                voice.provider_voice_id
+            )
+
+            if provider_voice_id is None:
+                raise ValueError(
+                    "Selected voice is not configured."
+                )
+
+            selected_voice_id = voice.id
 
         # Validate LiveKit configuration before spawning anything.
         _ = self.livekit_url
@@ -318,6 +361,10 @@ class AgentSessionManager:
         ] = system_prompt or ""
 
         process_env[
+            "AGNI_SESSION_VOICE_ID"
+        ] = provider_voice_id or ""
+
+        process_env[
             "PYTHONUNBUFFERED"
         ] = "1"
 
@@ -336,6 +383,7 @@ class AgentSessionManager:
         session = AgentSession(
             session_id=session_id,
             language=language,
+            voice_id=selected_voice_id,
             room_name=room_name,
             frontend_identity=(
                 frontend_identity
