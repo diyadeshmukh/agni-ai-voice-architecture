@@ -155,6 +155,8 @@ REQUESTED_STT_LANGUAGE = (
     )
 ).strip()
 
+SYSTEM_PROMPT = os.getenv("AGNI_SESSION_SYSTEM_PROMPT") or None
+
 STT_LANGUAGE_ALIASES = {
     # English
     "en": "english",
@@ -1262,6 +1264,7 @@ async def main() -> None:
         "Initializing OpenAI LLM provider..."
     )
     llm_provider = OpenAILLMProvider(
+        instructions=SYSTEM_PROMPT,
         response_language=REQUESTED_STT_LANGUAGE,
     )
     print(

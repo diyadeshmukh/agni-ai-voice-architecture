@@ -46,6 +46,7 @@ class CreateAgentSessionRequest(
     BaseModel
 ):
     language: str = "english"
+    system_prompt: str | None = None
 
     @field_validator(
         "language"
@@ -224,7 +225,8 @@ async def create_agent_session(
         ) = (
             await session_manager
             .create_session(
-                request.language
+                request.language,
+                request.system_prompt,
             )
         )
 
