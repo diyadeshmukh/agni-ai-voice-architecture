@@ -34,6 +34,7 @@ import asyncio
 import os
 import sys
 import uuid
+import tempfile
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -77,6 +78,7 @@ class AgentSession:
     session_id: str
     language: str
     voice_id: str | None
+    ready_file: Path
 
     room_name: str
 
@@ -87,12 +89,13 @@ class AgentSession:
 
     created_at: datetime
 
-    status: str = "active"
+    status: str = "starting"
     ended_at: datetime | None = None
 
     def refresh_status(self) -> str:
         """
-        Update the session status from the subprocess state.
+        Update the session status from the subprocess
+        and voice-pipeline readiness marker.
         """
 
         if self.status == "ended":
@@ -100,24 +103,20 @@ class AgentSession:
 
         return_code = self.process.returncode
 
-        if return_code is None:
-            self.status = "active"
-
-        elif return_code == 0:
-            self.status = "ended"
-
-            if self.ended_at is None:
-                self.ended_at = datetime.now(
-                    timezone.utc
-                )
-
-        else:
+        if return_code is not None:
             self.status = "failed"
 
             if self.ended_at is None:
                 self.ended_at = datetime.now(
                     timezone.utc
                 )
+
+            return self.status
+
+        if self.ready_file.exists():
+            self.status = "ready"
+        else:
+            self.status = "starting"
 
         return self.status
 
@@ -313,6 +312,15 @@ class AgentSessionManager:
             session_id[:12]
         )
 
+        ready_file = (
+            Path(
+                tempfile.gettempdir()
+            )
+            / "agni-ai"
+            / "session-readiness"
+            / f"{session_id}.ready"
+        )
+
         room_name = (
             f"agni-session-{short_id}"
         )
@@ -365,8 +373,20 @@ class AgentSessionManager:
         ] = provider_voice_id or ""
 
         process_env[
+            "AGNI_SESSION_READY_FILE"
+        ] = str(
+            ready_file
+        )
+
+        process_env[
             "PYTHONUNBUFFERED"
         ] = "1"
+
+        # Ensure a stale readiness marker cannot make
+        # a new session appear ready immediately.
+        ready_file.unlink(
+            missing_ok=True
+        )
 
         process = (
             await asyncio.create_subprocess_exec(
@@ -384,6 +404,7 @@ class AgentSessionManager:
             session_id=session_id,
             language=language,
             voice_id=selected_voice_id,
+            ready_file=ready_file,
             room_name=room_name,
             frontend_identity=(
                 frontend_identity
@@ -466,6 +487,10 @@ class AgentSessionManager:
                 session.process.kill()
 
                 await session.process.wait()
+
+        session.ready_file.unlink(
+            missing_ok=True
+        )
 
         session.status = "ended"
 

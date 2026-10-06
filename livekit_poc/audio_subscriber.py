@@ -71,6 +71,7 @@ import contextlib
 import os
 import time
 import numpy as np
+from pathlib import Path
 from dotenv import load_dotenv
 from livekit import api, rtc
 from scipy.signal import resample_poly
@@ -164,6 +165,10 @@ SESSION_VOICE_ID = (
         "AGNI_SESSION_VOICE_ID"
     )
     or None
+)
+
+SESSION_READY_FILE = os.getenv(
+    "AGNI_SESSION_READY_FILE"
 )
 
 STT_LANGUAGE_ALIASES = {
@@ -1321,6 +1326,30 @@ async def consume_audio_track(
             f"{total_audio_bytes}"
         )
 
+def signal_session_ready() -> None:
+    """
+    Signal to the parent session manager that this
+    voice pipeline is ready to accept user speech.
+
+    Manual standalone runs do not require a ready file.
+    """
+
+    if not SESSION_READY_FILE:
+        return
+
+    ready_path = Path(
+        SESSION_READY_FILE
+    )
+
+    ready_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    ready_path.touch(
+        exist_ok=True
+    )
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -1561,6 +1590,7 @@ async def main() -> None:
                 stt_adapter,
             )
         )
+        signal_session_ready()
         print()
         print(
             f"Streaming STT endpoint: "

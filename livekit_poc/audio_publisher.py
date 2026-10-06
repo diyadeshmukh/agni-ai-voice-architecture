@@ -95,7 +95,7 @@ AGENT_API_URL = os.getenv(
 )
 
 
-def create_agent_session() -> tuple[str, str]:
+def create_agent_session() -> tuple[str, str, str]:
     payload = json.dumps(
         {
             "language": "english",
@@ -121,6 +121,7 @@ def create_agent_session() -> tuple[str, str]:
         )
 
     return (
+        data["session_id"],
         data["livekit"]["room_name"],
         data["livekit"]["token"],
     )
@@ -410,12 +411,18 @@ async def main() -> None:
         "Creating Agni AI session..."
     )
 
-    session_room_name, session_token = (
-        create_agent_session()
+    (
+        session_id,
+        session_room_name,
+        session_token,
+    ) = create_agent_session()
+
+    print(
+        f"Session ID: {session_id}"
     )
 
     print(
-        f"Session created: {session_room_name}"
+        f"Room: {session_room_name}"
     )
 
     print(
