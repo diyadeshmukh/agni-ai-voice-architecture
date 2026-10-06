@@ -160,6 +160,10 @@ SYSTEM_PROMPT = os.getenv(
     "AGNI_SESSION_SYSTEM_PROMPT"
 ) or None
 
+WELCOME_MESSAGE = os.getenv(
+    "AGNI_SESSION_WELCOME_MESSAGE"
+) or None
+
 SESSION_VOICE_ID = (
     os.getenv(
         "AGNI_SESSION_VOICE_ID"
@@ -1564,6 +1568,11 @@ async def main() -> None:
         # Workers
         # -----------------------------------------------------------
 
+        # Start STT event processing and microphone streaming first.
+        #
+        # This allows the user's microphone to remain active while
+        # the optional welcome message is being spoken, so the user
+        # can interrupt the welcome message through normal barge-in.
         stt_event_task = asyncio.create_task(
             receive_stt_events(
                 stt_adapter,
@@ -1573,6 +1582,113 @@ async def main() -> None:
                 audio_output,
             )
         )
+
+        audio_task = asyncio.create_task(
+            consume_audio_track(
+                microphone_track,
+                microphone_identity,
+                stt_adapter,
+            )
+        )
+
+        # -----------------------------------------------------------
+        # Optional welcome message
+        # -----------------------------------------------------------
+
+        if WELCOME_MESSAGE:
+            print()
+            print("Welcome message configured.")
+            print("Speaking welcome message...")
+
+            interrupt_event.clear()
+            audio_output.begin_response()
+            ai_speaking.set()
+
+            async def consume_welcome_audio() -> None:
+                async for audio_chunk in tts_provider.synthesize(
+                    WELCOME_MESSAGE
+                ):
+                    if interrupt_event.is_set():
+                        return
+
+                    await audio_output.send_chunk(
+                        audio_chunk
+                    )
+
+            welcome_tts_task = asyncio.create_task(
+                consume_welcome_audio()
+            )
+
+            welcome_interrupt_task = asyncio.create_task(
+                interrupt_event.wait()
+            )
+
+            try:
+                await asyncio.wait(
+                    {
+                        welcome_tts_task,
+                        welcome_interrupt_task,
+                    },
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                if interrupt_event.is_set():
+                    if not welcome_tts_task.done():
+                        welcome_tts_task.cancel()
+
+                    await asyncio.gather(
+                        welcome_tts_task,
+                        return_exceptions=True,
+                    )
+
+                    audio_output.interrupt()
+
+                    print(
+                        "Welcome message interrupted."
+                    )
+
+                else:
+                    welcome_interrupt_task.cancel()
+
+                    await asyncio.gather(
+                        welcome_interrupt_task,
+                        return_exceptions=True,
+                    )
+
+                    # Propagate any real TTS error.
+                    await welcome_tts_task
+
+                    await audio_output.wait_for_playout()
+
+                    if interrupt_event.is_set():
+                        print(
+                            "Welcome message interrupted."
+                        )
+                    else:
+                        print(
+                            "Welcome message finished."
+                        )
+
+            finally:
+                for task in (
+                    welcome_tts_task,
+                    welcome_interrupt_task,
+                ):
+                    if not task.done():
+                        task.cancel()
+
+                await asyncio.gather(
+                    welcome_tts_task,
+                    welcome_interrupt_task,
+                    return_exceptions=True,
+                )
+
+                ai_speaking.clear()
+
+        # -----------------------------------------------------------
+        # Normal AI response worker
+        # -----------------------------------------------------------
+
         response_task = asyncio.create_task(
             process_ai_responses(
                 response_queue,
@@ -1583,14 +1699,12 @@ async def main() -> None:
                 interrupt_event,
             )
         )
-        audio_task = asyncio.create_task(
-            consume_audio_track(
-                microphone_track,
-                microphone_identity,
-                stt_adapter,
-            )
-        )
+
+        # The session is fully initialized once the microphone,
+        # STT workers, optional welcome message, and response worker
+        # are ready.
         signal_session_ready()
+
         print()
         print(
             f"Streaming STT endpoint: "

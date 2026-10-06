@@ -31,6 +31,7 @@ class CreateSessionRequest(BaseModel):
     language: str = "english"
     voice_id: str | None = None
     system_prompt: str | None = None
+    welcome_message: str | None = None
 
     @field_validator("language")
     @classmethod
@@ -173,6 +174,7 @@ def create_sessions_router(
                 language=request.language,
                 system_prompt=request.system_prompt,
                 voice_id=request.voice_id,
+                welcome_message=request.welcome_message,
             )
 
         except ValueError as exc:
