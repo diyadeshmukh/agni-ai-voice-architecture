@@ -100,6 +100,7 @@ def create_agent_session() -> tuple[str, str]:
         {
             "language": "english",
             "system_prompt": None,
+            "welcome_message": "Hello! Welcome to Agni AI. How can I help you today?",
         }
     ).encode("utf-8")
 

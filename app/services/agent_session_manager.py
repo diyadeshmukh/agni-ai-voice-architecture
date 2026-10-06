@@ -229,6 +229,7 @@ class AgentSessionManager:
         self,
         language: str,
         system_prompt: str | None = None,
+        welcome_message: str | None = None,
     ) -> tuple[
         AgentSession,
         str,
@@ -316,6 +317,10 @@ class AgentSessionManager:
         process_env[
             "AGNI_SESSION_SYSTEM_PROMPT"
         ] = system_prompt or ""
+
+        process_env[
+            "AGNI_SESSION_WELCOME_MESSAGE"
+        ] = welcome_message or ""
 
         process_env[
             "PYTHONUNBUFFERED"

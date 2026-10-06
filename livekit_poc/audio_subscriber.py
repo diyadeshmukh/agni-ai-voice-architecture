@@ -156,6 +156,7 @@ REQUESTED_STT_LANGUAGE = (
 ).strip()
 
 SYSTEM_PROMPT = os.getenv("AGNI_SESSION_SYSTEM_PROMPT") or None
+WELCOME_MESSAGE = os.getenv("AGNI_SESSION_WELCOME_MESSAGE") or None
 
 STT_LANGUAGE_ALIASES = {
     # English
@@ -1370,6 +1371,11 @@ async def main() -> None:
         "TTS provider ready."
     )
 
+    if WELCOME_MESSAGE:
+        print(
+            "Welcome message configured."
+        )
+
     # ---------------------------------------------------------------
     # LiveKit
     # ---------------------------------------------------------------
@@ -1550,6 +1556,29 @@ async def main() -> None:
                 stt_adapter,
             )
         )
+        if WELCOME_MESSAGE:
+            print()
+            print("Speaking welcome message...")
+
+            interrupt_event.clear()
+            audio_output.begin_response()
+            ai_speaking.set()
+
+            async for audio_chunk in tts_provider.synthesize(
+                WELCOME_MESSAGE
+            ):
+                if interrupt_event.is_set():
+                    break
+
+                await audio_output.send_chunk(
+                    audio_chunk
+                )
+
+            await audio_output.wait_for_playout()
+
+            ai_speaking.clear()
+
+            print("Welcome message finished.")
         print()
         print(
             f"Streaming STT endpoint: "
