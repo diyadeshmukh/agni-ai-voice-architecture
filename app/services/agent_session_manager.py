@@ -465,6 +465,10 @@ class AgentSessionManager:
         ] = language
 
         process_env[
+            "AGNI_SESSION_ID"
+        ] = session_id
+
+        process_env[
             "AGNI_SESSION_SYSTEM_PROMPT"
         ] = system_prompt or ""
 

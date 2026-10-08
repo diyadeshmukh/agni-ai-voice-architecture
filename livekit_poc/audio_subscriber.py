@@ -70,6 +70,8 @@ import asyncio
 import contextlib
 import os
 import time
+import json
+import tempfile
 import numpy as np
 from pathlib import Path
 from dotenv import load_dotenv
@@ -181,6 +183,49 @@ SESSION_READY_FILE = os.getenv(
 SESSION_RUNTIME_FILE = os.getenv(
     "AGNI_SESSION_RUNTIME_FILE"
 )
+
+SESSION_ID = os.getenv(
+    "AGNI_SESSION_ID"
+)
+
+METRICS_DIR = (
+    Path(tempfile.gettempdir())
+    / "agni-ai"
+    / "session-metrics"
+)
+
+METRICS_FILE = (
+    METRICS_DIR
+    / f"{SESSION_ID}.json"
+) if SESSION_ID else None
+
+metrics = {
+    "session_id": SESSION_ID,
+    "started_at": time.time(),
+    "ended_at": None,
+    "user_turns": 0,
+    "assistant_turns": 0,
+    "interruptions": 0,
+    "turns": [],
+}
+
+
+def save_metrics() -> None:
+    if METRICS_FILE is None:
+        return
+
+    METRICS_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    METRICS_FILE.write_text(
+        json.dumps(
+            metrics,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 STT_LANGUAGE_ALIASES = {
     # English
@@ -771,6 +816,23 @@ async def process_ai_responses(
                 "listening",
                 "assistant_speech_ended",
             )
+
+            metrics["assistant_turns"] += 1
+
+            metrics["turns"].append(
+                {
+                    "response_text": response_text,
+                    "llm_latency_ms": (
+                        (llm_completed_at - llm_started_at) * 1000
+                    ),
+                    "tts_latency_ms": (
+                        (tts_generation_completed_at - tts_started_at) * 1000
+                    ),
+                    "response_latency_ms": (
+                        (playback_completed_at - utterance_ready_at) * 1000
+                    ),
+                }
+            )
             print(
                 f"TTS chunks: "
                 f"{chunk_count}"
@@ -1010,6 +1072,9 @@ async def receive_stt_events(
 
         if interrupt_event.is_set():
             return
+
+        metrics["interruptions"] += 1
+
         print()
         print(
             f"[BARGE-IN] User interrupted Agni "
@@ -1050,6 +1115,8 @@ async def receive_stt_events(
         if not final_utterance:
             last_final_at = None
             return
+        metrics["user_turns"] += 1
+
         print()
         print(
             f"[UTTERANCE - {trigger}] "
@@ -1802,6 +1869,9 @@ async def main() -> None:
         await asyncio.Event().wait()
 
     finally:
+        metrics["ended_at"] = time.time()
+        save_metrics()
+
         print()
         print(
             "Stopping Agni AI "
