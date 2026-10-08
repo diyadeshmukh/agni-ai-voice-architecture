@@ -104,6 +104,22 @@ class CreateSessionResponse(BaseModel):
 
     created_at: datetime
 
+class TranscriptMessageResponse(
+    BaseModel
+):
+    role: str
+    content: str
+    created_at: datetime
+
+
+class RealtimeStateResponse(
+    BaseModel
+):
+    state: str
+
+    last_event: str | None = None
+
+    updated_at: datetime | None = None
 
 class SessionResponse(BaseModel):
     session_id: str
@@ -115,6 +131,12 @@ class SessionResponse(BaseModel):
 
     frontend_identity: str
     agent_identity: str
+
+    transcript: list[
+        TranscriptMessageResponse
+    ]
+
+    realtime: RealtimeStateResponse
 
     created_at: datetime
     ended_at: datetime | None
@@ -131,19 +153,78 @@ def _session_response(
 
     session.refresh_status()
 
+    runtime = (
+        session.runtime_snapshot()
+    )
+
     return SessionResponse(
         session_id=session.session_id,
+
         status=session.status,
+
         language=session.language,
+
         voice_id=session.voice_id,
+
         room_name=session.room_name,
+
         frontend_identity=(
             session.frontend_identity
         ),
+
         agent_identity=(
             session.agent_identity
         ),
+
+        transcript=[
+            TranscriptMessageResponse(
+                role=message["role"],
+                content=message["content"],
+                created_at=(
+                    message["created_at"]
+                ),
+            )
+            for message
+            in runtime["transcript"]
+            if (
+                isinstance(
+                    message,
+                    dict,
+                )
+                and message.get(
+                    "role"
+                )
+                and message.get(
+                    "content"
+                )
+                and message.get(
+                    "created_at"
+                )
+            )
+        ],
+
+        realtime=RealtimeStateResponse(
+            state=(
+                runtime[
+                    "realtime"
+                ]["state"]
+            ),
+
+            last_event=(
+                runtime[
+                    "realtime"
+                ]["last_event"]
+            ),
+
+            updated_at=(
+                runtime[
+                    "realtime"
+                ]["updated_at"]
+            ),
+        ),
+
         created_at=session.created_at,
+
         ended_at=session.ended_at,
     )
 

@@ -87,6 +87,9 @@ from app.voice.openai_llm_provider import (
 from app.voice.stt_stream_adapter import (
     STTStreamAdapter,
 )
+from app.voice.session_runtime_state import (
+    SessionRuntimeState,
+)
 
 load_dotenv(
     ".env.local",
@@ -173,6 +176,10 @@ SESSION_VOICE_ID = (
 
 SESSION_READY_FILE = os.getenv(
     "AGNI_SESSION_READY_FILE"
+)
+
+SESSION_RUNTIME_FILE = os.getenv(
+    "AGNI_SESSION_RUNTIME_FILE"
 )
 
 STT_LANGUAGE_ALIASES = {
@@ -373,6 +380,7 @@ async def process_ai_responses(
     audio_output: LiveKitAudioOutput,
     ai_speaking: asyncio.Event,
     interrupt_event: asyncio.Event,
+    runtime_state: SessionRuntimeState,
 ) -> None:
     """
 
@@ -431,6 +439,11 @@ async def process_ai_responses(
 
             if not transcript:
                 continue
+            
+            await runtime_state.set_realtime(
+                "processing",
+                "assistant_processing",
+            )
 
             # -------------------------------------------------------
             # New active AI turn
@@ -578,6 +591,11 @@ async def process_ai_responses(
                     if first_tts_chunk_at is None:
                         first_tts_chunk_at = (
                             time.perf_counter()
+                        )
+                    
+                        await runtime_state.set_realtime(
+                            "assistant_speaking",
+                            "assistant_speech_started",
                         )
 
                     chunk_count += 1
@@ -727,6 +745,11 @@ async def process_ai_responses(
             print("Agni AI:")
             print(response_text)
             print()
+            
+            await runtime_state.add_message(
+                "assistant",
+                response_text,
+            )
 
             # -------------------------------------------------------
             # Wait for LiveKit playback
@@ -743,6 +766,10 @@ async def process_ai_responses(
                 continue
             playback_completed_at = (
                 time.perf_counter()
+            )
+            await runtime_state.set_realtime(
+                "listening",
+                "assistant_speech_ended",
             )
             print(
                 f"TTS chunks: "
@@ -947,6 +974,7 @@ async def receive_stt_events(
     ai_speaking: asyncio.Event,
     interrupt_event: asyncio.Event,
     audio_output: LiveKitAudioOutput,
+    runtime_state: SessionRuntimeState,
 ) -> None:
     """
     Receive normalized STT events and dispatch completed user turns.
@@ -994,6 +1022,13 @@ async def receive_stt_events(
         # - reject remaining old-response chunks
         # - clear already queued LiveKit audio
         audio_output.interrupt()
+        
+        asyncio.create_task(
+            runtime_state.set_realtime(
+                "interrupted",
+                "user_interrupted",
+            )
+        )
 
     # ------------------------------------------------------------------
     # Completed utterance dispatcher
@@ -1019,6 +1054,15 @@ async def receive_stt_events(
         print(
             f"[UTTERANCE - {trigger}] "
             f"{final_utterance}"
+        )
+        await runtime_state.add_message(
+            "user",
+            final_utterance,
+        )
+
+        await runtime_state.set_realtime(
+            "processing",
+            "user_transcript",
         )
         await response_queue.put(
             (
@@ -1159,6 +1203,11 @@ async def receive_stt_events(
 
             print(
                 "[VAD] Speech started"
+            )
+            
+            await runtime_state.set_realtime(
+                "user_speaking",
+                "user_speech_started",
             )
 
             # Flux speech_started comes from the semantic
@@ -1377,6 +1426,15 @@ async def main() -> None:
             "LIVEKIT_URL is missing from "
             ".env.local"
         )
+        
+    runtime_state = (
+        SessionRuntimeState(
+            SESSION_RUNTIME_FILE
+        )
+    )
+
+    await runtime_state.initialize()
+        
     print()
     print("=" * 72)
     print(
@@ -1580,6 +1638,7 @@ async def main() -> None:
                 ai_speaking,
                 interrupt_event,
                 audio_output,
+                runtime_state,
             )
         )
 
@@ -1665,6 +1724,10 @@ async def main() -> None:
                             "Welcome message interrupted."
                         )
                     else:
+                        await runtime_state.add_message(
+                            "assistant",
+                            WELCOME_MESSAGE,
+                        )
                         print(
                             "Welcome message finished."
                         )
@@ -1697,6 +1760,7 @@ async def main() -> None:
                 audio_output,
                 ai_speaking,
                 interrupt_event,
+                runtime_state,
             )
         )
 
@@ -1704,6 +1768,11 @@ async def main() -> None:
         # STT workers, optional welcome message, and response worker
         # are ready.
         signal_session_ready()
+        
+        await runtime_state.set_realtime(
+            "listening",
+            "session_ready",
+        )
 
         print()
         print(
@@ -1786,6 +1855,12 @@ async def main() -> None:
             await stt_adapter.close()
         await audio_output.close()
         await room.disconnect()
+        
+        await runtime_state.set_realtime(
+            "ended",
+            "session_ended",
+        )
+        
         print(
             "Disconnected from LiveKit."
         )

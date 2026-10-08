@@ -31,6 +31,7 @@ allowing multiple frontend sessions to run independently.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import uuid
@@ -79,6 +80,7 @@ class AgentSession:
     language: str
     voice_id: str | None
     ready_file: Path
+    runtime_file: Path
 
     room_name: str
 
@@ -119,6 +121,94 @@ class AgentSession:
             self.status = "starting"
 
         return self.status
+    
+    def runtime_snapshot(self) -> dict:
+        """
+        Read transcript and realtime state
+        written by the realtime voice worker.
+        """
+
+        fallback_state = (
+            "ended"
+            if self.status in {
+                "ended",
+                "failed",
+            }
+            else self.status
+        )
+
+        fallback = {
+            "transcript": [],
+            "realtime": {
+                "state": fallback_state,
+                "last_event": None,
+                "updated_at": None,
+            },
+        }
+
+        if not self.runtime_file.exists():
+            return fallback
+
+        try:
+
+            with self.runtime_file.open(
+                "r",
+                encoding="utf-8",
+            ) as handle:
+
+                data = json.load(
+                    handle
+                )
+
+        except (
+            OSError,
+            json.JSONDecodeError,
+        ):
+            return fallback
+
+        if not isinstance(
+            data,
+            dict,
+        ):
+            return fallback
+
+        transcript = data.get(
+            "transcript",
+            [],
+        )
+
+        realtime = data.get(
+            "realtime",
+            {},
+        )
+
+        if not isinstance(
+            transcript,
+            list,
+        ):
+            transcript = []
+
+        if not isinstance(
+            realtime,
+            dict,
+        ):
+            realtime = {}
+
+        return {
+            "transcript": transcript,
+            "realtime": {
+                "state": realtime.get(
+                    "state",
+                    fallback_state,
+                ),
+                "last_event": realtime.get(
+                    "last_event"
+                ),
+                "updated_at": realtime.get(
+                    "updated_at"
+                ),
+            },
+        }
 
 
 class AgentSessionManager:
@@ -321,6 +411,15 @@ class AgentSessionManager:
             / "session-readiness"
             / f"{session_id}.ready"
         )
+        
+        runtime_file = (
+            Path(
+                tempfile.gettempdir()
+            )
+            / "agni-ai"
+            / "session-runtime"
+            / f"{session_id}.json"
+        )
 
         room_name = (
             f"agni-session-{short_id}"
@@ -382,6 +481,12 @@ class AgentSessionManager:
         ] = str(
             ready_file
         )
+        
+        process_env[
+            "AGNI_SESSION_RUNTIME_FILE"
+        ] = str(
+            runtime_file
+        )
 
         process_env[
             "PYTHONUNBUFFERED"
@@ -390,6 +495,10 @@ class AgentSessionManager:
         # Ensure a stale readiness marker cannot make
         # a new session appear ready immediately.
         ready_file.unlink(
+            missing_ok=True
+        )
+        
+        runtime_file.unlink(
             missing_ok=True
         )
 
@@ -410,7 +519,9 @@ class AgentSessionManager:
             language=language,
             voice_id=selected_voice_id,
             ready_file=ready_file,
+            runtime_file=runtime_file,
             room_name=room_name,
+            
             frontend_identity=(
                 frontend_identity
             ),
