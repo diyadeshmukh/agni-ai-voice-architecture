@@ -47,6 +47,7 @@ class SessionRuntimeState:
         self,
         role: str,
         content: str,
+        interrupted: bool = False,
     ) -> None:
 
         content = content.strip()
@@ -63,6 +64,7 @@ class SessionRuntimeState:
                     "role": role,
                     "content": content,
                     "created_at": self._now(),
+                    "interrupted": interrupted,
                 }
             )
 

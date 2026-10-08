@@ -110,6 +110,7 @@ class TranscriptMessageResponse(
     role: str
     content: str
     created_at: datetime
+    interrupted: bool = False
 
 
 class RealtimeStateResponse(
@@ -182,6 +183,10 @@ def _session_response(
                 content=message["content"],
                 created_at=(
                     message["created_at"]
+                ),
+                interrupted=message.get(
+                    "interrupted",
+                    False,
                 ),
             )
             for message
