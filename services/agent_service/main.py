@@ -43,21 +43,56 @@ from app.api.v1.sessions import (  # noqa: E402
     create_sessions_router,
 )
 
+# Text chatbot API used by the floating Agni chat widget.
+# This is separate from the realtime LiveKit voice-session API.
+from app.api.v1.chat import (  # noqa: E402
+    create_chat_router,
+)
+
 from app.services.agent_session_manager import (  # noqa: E402
     AgentSessionManager,
 )
 
+# Handles text-only chatbot conversations and OpenAI responses.
+from app.services.chat_service import (  # noqa: E402
+    ChatService,
+)
+
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+#
+# Voice session manager:
+# Handles the realtime LiveKit voice-agent sessions.
+#
+# Chat service:
+# Handles the separate floating text chatbot.
+# ---------------------------------------------------------------------------
 
 session_manager = AgentSessionManager()
 
+chat_service = ChatService()
+
+
+# ---------------------------------------------------------------------------
+# API Routers
+# ---------------------------------------------------------------------------
+
+# Realtime voice-agent sessions.
 sessions_router = create_sessions_router(
     session_manager
 )
 
+# Floating text chatbot.
+chat_router = create_chat_router(
+    chat_service
+)
+
+# Existing service health endpoint.
 health_router = create_health_router(
     session_manager
 )
-
 
 # ---------------------------------------------------------------------------
 # Lifespan
@@ -80,8 +115,8 @@ async def lifespan(
 app = FastAPI(
     title="Agni AI Agent API",
     description=(
-        "Frontend API for creating and managing "
-        "Agni AI realtime voice sessions"
+        "Frontend API for Agni AI realtime voice sessions "
+        "and the floating text chatbot"
     ),
     lifespan=lifespan,
 )
@@ -130,8 +165,18 @@ app.include_router(
     prefix="/api/v1",
 )
 
+# Realtime voice-agent sessions.
 app.include_router(
     sessions_router,
+    prefix="/api/v1",
+)
+
+# Floating Agni text chatbot.
+#
+# Final endpoint:
+# POST /api/v1/chat
+app.include_router(
+    chat_router,
     prefix="/api/v1",
 )
 
