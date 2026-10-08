@@ -674,6 +674,17 @@ async def process_ai_responses(
                         "[BARGE-IN] "
                         "Current AI response cancelled."
                     )
+                    
+                    partial_response = "".join(
+                        response_chunks
+                    ).strip()
+
+                    if partial_response:
+                        await runtime_state.add_message(
+                            "assistant",
+                            partial_response,
+                            interrupted=True,
+                        )
 
                     continue
 
@@ -746,10 +757,6 @@ async def process_ai_responses(
             print(response_text)
             print()
             
-            await runtime_state.add_message(
-                "assistant",
-                response_text,
-            )
 
             # -------------------------------------------------------
             # Wait for LiveKit playback
@@ -758,14 +765,27 @@ async def process_ai_responses(
             await audio_output.wait_for_playout()
 
             if interrupt_event.is_set():
+
+                await runtime_state.add_message(
+                    "assistant",
+                    response_text,
+                    interrupted=True,
+                )
+
                 print()
                 print(
                     "[BARGE-IN] "
                     "AI playback interrupted."
                 )
+
                 continue
             playback_completed_at = (
                 time.perf_counter()
+            )
+            await runtime_state.add_message(
+                "assistant",
+                response_text,
+                interrupted=False,
             )
             await runtime_state.set_realtime(
                 "listening",
