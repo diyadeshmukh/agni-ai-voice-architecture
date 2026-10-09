@@ -1,5 +1,5 @@
 """
-Agni AI - Streaming STT WebSocket Endpoint
+Jeeva AI - Streaming STT WebSocket Endpoint
 
 Receives continuous raw audio from a client such as the LiveKit
 audio pipeline and forwards it to the streaming Deepgram STT service.

@@ -1,4 +1,4 @@
-# Agni AI — Real-Time Voice Agent
+# Jeeva AI — Real-Time Voice Agent
 
 > A modular real-time voice AI pipeline built with **LiveKit**, **Deepgram**, **OpenAI**, **ElevenLabs**, and **FastAPI**.
 
@@ -6,7 +6,7 @@
 
 ## Overview
 
-Agni AI is a real-time voice-agent system designed to replace a human voice agent in a call flow.
+Jeeva AI is a real-time voice-agent system designed to replace a human voice agent in a call flow.
 
 The current repository contains:
 
@@ -166,7 +166,7 @@ incomplete_speech
 error
 ```
 
-For Flux, `StartOfTurn` is normalized to `speech_started`. `StartOfTurn` may contain an empty transcript, so Agni emits `speech_started` immediately instead of waiting for transcript text.
+For Flux, `StartOfTurn` is normalized to `speech_started`. `StartOfTurn` may contain an empty transcript, so Jeeva emits `speech_started` immediately instead of waiting for transcript text.
 
 ---
 
@@ -196,12 +196,12 @@ This prevents duplicate LLM calls, unnecessary token usage, responses to unfinis
 
 ## Barge-In / Interruption
 
-The microphone remains connected to STT while Agni is speaking.
+The microphone remains connected to STT while Jeeva is speaking.
 
 For Flux languages, semantic `StartOfTurn` is used as the primary hard-interrupt signal:
 
 ```text
-Agni speaking
+Jeeva speaking
     ↓
 User begins speaking
     ↓
@@ -217,7 +217,7 @@ LiveKit queued AI audio cleared
     ↓
 User's completed utterance is processed
     ↓
-Agni starts the new response
+Jeeva starts the new response
 ```
 
 For Nova-3 / Marathi, raw VAD `speech_started` does not immediately interrupt. A non-empty partial or final transcript confirms the interruption.
@@ -274,7 +274,7 @@ The Agent API supports an optional `system_prompt` when creating a voice session
 The value is passed into the dedicated session subprocess through:
 
 ```text
-AGNI_SESSION_SYSTEM_PROMPT
+JEEVA_SESSION_SYSTEM_PROMPT
 ```
 
 The integrated voice pipeline then initializes the OpenAI provider with that prompt as its instructions.
@@ -383,7 +383,7 @@ Example response:
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `POST` | `/api/v1/sessions` | Start an Agni voice session |
+| `POST` | `/api/v1/sessions` | Start an Jeeva voice session |
 | `GET` | `/api/v1/sessions/{session_id}` | Read session status |
 | `DELETE` | `/api/v1/sessions/{session_id}` | Stop the session |
 
@@ -414,10 +414,10 @@ When a session is created, the Agent API:
 Per-session configuration currently includes:
 
 ```text
-AGNI_SESSION_ROOM_NAME
-AGNI_SESSION_PARTICIPANT_IDENTITY
-AGNI_SESSION_LANGUAGE
-AGNI_SESSION_SYSTEM_PROMPT
+JEEVA_SESSION_ROOM_NAME
+JEEVA_SESSION_PARTICIPANT_IDENTITY
+JEEVA_SESSION_LANGUAGE
+JEEVA_SESSION_SYSTEM_PROMPT
 ```
 
 A successful create-session response includes:
@@ -441,7 +441,7 @@ Example response shape:
   "language": "english",
   "livekit": {
     "url": "wss://...",
-    "room_name": "agni-session-876ff8bdca15",
+    "room_name": "jeeva-session-876ff8bdca15",
     "token": "..."
   },
   "tracks": {
@@ -463,7 +463,7 @@ Example response:
 ```json
 {
   "status": "ok",
-  "service": "Agni Agent API",
+  "service": "Jeeva Agent API",
   "livekit_configured": true
 }
 ```
@@ -477,7 +477,7 @@ Persistent or distributed production session orchestration is not implemented ye
 ## Project Structure
 
 ```text
-agni-ai/
+jeeva-ai/
 │
 ├── README.md
 ├── .gitignore
@@ -555,11 +555,11 @@ sessions.py
 
 ### `livekit_poc/audio_subscriber.py`
 
-This is the current integrated Agni voice-agent pipeline.
+This is the current integrated Jeeva voice-agent pipeline.
 
 It connects to LiveKit, receives microphone audio, streams it to STT, processes completed utterances, streams OpenAI output into ElevenLabs, publishes `voice-output`, and handles hard interruption.
 
-For frontend-created sessions, it receives session-specific configuration through `AGNI_SESSION_*` environment variables.
+For frontend-created sessions, it receives session-specific configuration through `JEEVA_SESSION_*` environment variables.
 
 ### `livekit_poc/audio_publisher.py`
 
@@ -571,7 +571,7 @@ The local full-duplex setup enables AEC and keeps noise suppression and automati
 
 The publisher also subscribes to `voice-output`, so a separate `tts_listener` is not required for the integrated local POC.
 
-When `AGNI_SESSION_ROOM_NAME` is available, the publisher can use the session-specific room name. Otherwise it falls back to the normal local `LIVEKIT_ROOM_NAME` configuration.
+When `JEEVA_SESSION_ROOM_NAME` is available, the publisher can use the session-specific room name. Otherwise it falls back to the normal local `LIVEKIT_ROOM_NAME` configuration.
 
 ### `livekit_poc/tts_listener.py`
 
@@ -584,7 +584,7 @@ Keep it for isolated TTS / LiveKit testing; it is not part of the normal integra
 Standalone ElevenLabs → LiveKit TTS diagnostic.
 
 ```powershell
-python -m livekit_poc.tts_publisher "Hello from Agni AI."
+python -m livekit_poc.tts_publisher "Hello from Jeeva AI."
 ```
 
 ### `livekit_poc/llm_poc.py`
@@ -592,7 +592,7 @@ python -m livekit_poc.tts_publisher "Hello from Agni AI."
 Standalone OpenAI diagnostic.
 
 ```powershell
-python -m livekit_poc.llm_poc "Reply only with: Agni AI ready."
+python -m livekit_poc.llm_poc "Reply only with: Jeeva AI ready."
 ```
 
 This command makes a real OpenAI API request and consumes provider usage.
@@ -607,7 +607,7 @@ Current development setup:
 |---|---|
 | Operating system | Windows |
 | Environment | Conda |
-| Environment name | `agni-ai` |
+| Environment name | `jeeva-ai` |
 | Python | 3.11.x |
 | STT | Deepgram |
 | LLM | OpenAI |
@@ -618,7 +618,7 @@ Current development setup:
 Activate the environment:
 
 ```powershell
-conda activate agni-ai
+conda activate jeeva-ai
 ```
 
 Install dependencies:
@@ -650,23 +650,23 @@ ELEVENLABS_OUTPUT_FORMAT=pcm_16000
 LIVEKIT_URL=<your-livekit-url>
 LIVEKIT_API_KEY=<your-livekit-api-key>
 LIVEKIT_API_SECRET=<your-livekit-api-secret>
-LIVEKIT_ROOM_NAME=agni-ai-voice-poc
+LIVEKIT_ROOM_NAME=jeeva-ai-voice-poc
 
 STT_STREAM_ENDPOINT=ws://127.0.0.1:8000/api/v1/stt/stream
-AGNI_STT_LANGUAGE=english
+JEEVA_STT_LANGUAGE=english
 
-AGNI_FRONTEND_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173
+JEEVA_FRONTEND_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173
 ```
 
-The Agent API passes per-session room, participant, language, and system-prompt configuration to the spawned agent subprocess using `AGNI_SESSION_*` environment variables.
+The Agent API passes per-session room, participant, language, and system-prompt configuration to the spawned agent subprocess using `JEEVA_SESSION_*` environment variables.
 
 Current internal session variables include:
 
 ```text
-AGNI_SESSION_ROOM_NAME
-AGNI_SESSION_PARTICIPANT_IDENTITY
-AGNI_SESSION_LANGUAGE
-AGNI_SESSION_SYSTEM_PROMPT
+JEEVA_SESSION_ROOM_NAME
+JEEVA_SESSION_PARTICIPANT_IDENTITY
+JEEVA_SESSION_LANGUAGE
+JEEVA_SESSION_SYSTEM_PROMPT
 ```
 
 These are internal session values and normally do not need to be set manually.
@@ -690,7 +690,7 @@ For local voice testing, avoid `--reload` because a reload can interrupt the act
 Choose a language, for example English:
 
 ```powershell
-$env:AGNI_STT_LANGUAGE="english"
+$env:JEEVA_STT_LANGUAGE="english"
 
 python -m livekit_poc.audio_subscriber
 ```
@@ -747,7 +747,7 @@ DELETE /api/v1/sessions/{session_id}
 GET    /api/v1/health
 ```
 
-When the frontend calls `POST /api/v1/sessions`, the Agent API creates a unique LiveKit room/token and starts a dedicated Agni `audio_subscriber` subprocess for that session.
+When the frontend calls `POST /api/v1/sessions`, the Agent API creates a unique LiveKit room/token and starts a dedicated Jeeva `audio_subscriber` subprocess for that session.
 
 The frontend is responsible for:
 
@@ -758,7 +758,7 @@ publishing microphone track "microphone"
         ↓
 receiving/subscribing to "voice-output"
         ↓
-playing Agni's generated audio
+playing Jeeva's generated audio
 ```
 
 The Agent API never exposes backend provider secrets such as:
@@ -791,7 +791,7 @@ python -m app.services.stt_service --source file --path <file.wav> --language en
 ### LLM
 
 ```powershell
-python -m livekit_poc.llm_poc "Reply only with: Agni AI ready."
+python -m livekit_poc.llm_poc "Reply only with: Jeeva AI ready."
 ```
 
 ### Standalone TTS through LiveKit
@@ -805,7 +805,7 @@ python -m livekit_poc.tts_listener
 Then run the publisher:
 
 ```powershell
-python -m livekit_poc.tts_publisher "Hello from Agni AI."
+python -m livekit_poc.tts_publisher "Hello from Jeeva AI."
 ```
 
 ---
@@ -845,7 +845,7 @@ High-pass filter = enabled
 Automatic gain control = disabled
 ```
 
-The microphone is **not replaced with silence while Agni speaks**.
+The microphone is **not replaced with silence while Jeeva speaks**.
 
 Real microphone audio continues flowing to STT so user interruption can be detected.
 
@@ -864,18 +864,18 @@ Exotel number
       ↓
 Exotel media / voicebot integration
       ↓
-Agni audio bridge
+Jeeva audio bridge
       ↓
 STT → LLM → TTS
       ↓
 Audio returned to Exotel
       ↓
-Customer hears Agni
+Customer hears Jeeva
 ```
 
 The caller's phone handles its own earpiece, speaker, wired headset, Bluetooth headset, or car audio.
 
-Agni receives the telephony audio stream rather than selecting the caller's physical audio device.
+Jeeva receives the telephony audio stream rather than selecting the caller's physical audio device.
 
 Exotel integration is still pending and should be treated as a separate transport layer from the current local LiveKit development harness.
 

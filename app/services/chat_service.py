@@ -1,5 +1,5 @@
 """
-Agni AI - Text Chat Service
+Jeeva AI - Text Chat Service
 
 Purpose
 -------
@@ -7,20 +7,16 @@ This file handles the floating text chatbot shown on the frontend.
 
 This chatbot is completely separate from the realtime voice-agent system.
 
-Text chatbot flow:
-
-    User types a message
-            ↓
-        ChatService
-            ↓
-          OpenAI
-            ↓
-      Text response
-            ↓
-    Frontend chat bubble
+Supported chat features:
+- normal text messages
+- emoji characters
+- conversation history
+- start new conversation
+- document attachments
+- image attachments
+- text + attachment messages
 
 This file DOES NOT use:
-
 - LiveKit
 - Deepgram STT
 - ElevenLabs TTS
@@ -33,10 +29,15 @@ Voice-agent logic should remain separate.
 from __future__ import annotations
 
 import asyncio
+import base64
+import mimetypes
 import os
 import uuid
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
 from openai import AsyncOpenAI
 
@@ -44,24 +45,16 @@ from openai import AsyncOpenAI
 # ---------------------------------------------------------------------------
 # Default chatbot instructions
 # ---------------------------------------------------------------------------
-#
-# These instructions tell OpenAI how the floating Agni chatbot should behave.
-#
-# Later, if required, this can be moved into configuration or database settings.
-#
-# We intentionally keep the chatbot concise because it is displayed inside
-# a small floating chat widget on the frontend.
-# ---------------------------------------------------------------------------
 
 DEFAULT_CHAT_INSTRUCTIONS = """
-You are Agni, the text chatbot for the Agni AI platform.
+You are Jeeva, the text chatbot for the Jeeva AI platform.
 
-Agni AI is a voice AI platform for building and running
+Jeeva AI is a voice AI platform for building and running
 AI voice agents.
 
 Your job in this chat widget is to:
-- answer general questions about Agni AI
-- help users understand the platform
+- answer general questions about Jeeva AI
+- help users understand the Jeeva AI platform
 - help users who want to book a demo
 - help users describe an issue
 - answer normal general questions when appropriate
@@ -70,30 +63,116 @@ Rules:
 - Be friendly, clear, and concise.
 - This is a text chatbot, so return text only.
 - Reply in the same language style as the user when practical.
+- When the current user message includes an attachment, use the attachment
+  contents when answering.
+- If attachment content is available to you, do not say that no attachment
+  was provided or that you cannot see the attachment.
+- If an attachment genuinely cannot be read, say clearly that the file
+  could not be read and do not invent its contents.
 - Do not pretend that you completed a booking, ticket, payment,
   or other external action unless the system actually performed it.
 - Do not invent pricing, policies, integrations, or unsupported
   product capabilities.
-- If you do not know an Agni-specific fact, say so clearly.
+- If you do not know a Jeeva-specific fact, say so clearly.
 """.strip()
 
 
 # ---------------------------------------------------------------------------
-# Custom exception
+# Attachment settings
 # ---------------------------------------------------------------------------
+
+# Maximum attachment size allowed by our backend.
 #
-# Raised when frontend sends a conversation_id that does not exist.
+# Default:
+# 10 MB
 #
-# Example:
+# This can later be changed through:
 #
-# conversation_id = "chat_invalid123"
+# AGNI_CHAT_MAX_ATTACHMENT_BYTES
 #
-# If that conversation is not present in memory,
-# the API can return a clean 404 response.
+MAX_ATTACHMENT_BYTES = int(
+    os.getenv(
+        "AGNI_CHAT_MAX_ATTACHMENT_BYTES",
+        str(10 * 1024 * 1024),
+    )
+)
+
+
+# Maximum number of attachments allowed with one chat message.
+MAX_ATTACHMENTS_PER_MESSAGE = int(
+    os.getenv(
+        "AGNI_CHAT_MAX_ATTACHMENTS",
+        "3",
+    )
+)
+
+
+# Common document formats accepted by the Responses API.
+DOCUMENT_EXTENSIONS = {
+    ".pdf",
+    ".txt",
+    ".md",
+    ".json",
+    ".html",
+    ".xml",
+    ".doc",
+    ".docx",
+    ".rtf",
+    ".odt",
+    ".ppt",
+    ".pptx",
+    ".csv",
+    ".xls",
+    ".xlsx",
+}
+
+
+# Image formats that we will allow in the Jeeva chatbot.
+IMAGE_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+}
+
+
+# ---------------------------------------------------------------------------
+# Custom exceptions
 # ---------------------------------------------------------------------------
 
 class ChatConversationNotFound(Exception):
-    """Raised when a requested chat conversation does not exist."""
+    """
+    Raised when frontend sends a conversation_id
+    that does not exist.
+    """
+
+
+class ChatAttachmentError(ValueError):
+    """
+    Raised when an uploaded chatbot attachment
+    is invalid or unsupported.
+    """
+
+
+# ---------------------------------------------------------------------------
+# Attachment input object
+# ---------------------------------------------------------------------------
+
+@dataclass(slots=True)
+class ChatAttachmentInput:
+    """
+    Internal representation of an uploaded file.
+
+    The API layer will read FastAPI UploadFile objects
+    and convert them into this simple structure.
+
+    Keeping this object here means ChatService does not
+    need to depend directly on FastAPI.
+    """
+
+    filename: str
+    content_type: str | None
+    data: bytes
 
 
 # ---------------------------------------------------------------------------
@@ -102,23 +181,27 @@ class ChatConversationNotFound(Exception):
 
 class ChatService:
     """
-    Handles text-only chatbot conversations.
+    Handles Jeeva chatbot conversations.
 
-    Current V1 behavior:
-    --------------------
-    - Creates a conversation ID.
+    Current behavior:
+    -----------------
+    - Creates conversation IDs.
     - Stores conversation messages in memory.
+    - Supports normal text.
+    - Supports emoji characters.
+    - Supports images/documents.
     - Sends conversation history to OpenAI.
-    - Stores the assistant response.
-    - Returns the complete conversation to the API.
+    - Stores assistant responses.
+    - Returns complete conversation history.
 
     Important:
     ----------
     Conversation history is currently stored in Python memory.
 
     This means:
+
         backend restart
-            ↓
+            ->
         stored chatbot conversations are cleared
 
     Later, Pooja's database layer can persist these conversations.
@@ -133,13 +216,6 @@ class ChatService:
         # ------------------------------------------------------------------
         # OpenAI API key
         # ------------------------------------------------------------------
-        #
-        # Normally comes from:
-        #
-        # OPENAI_API_KEY
-        #
-        # We also allow passing it directly for testing if needed.
-        # ------------------------------------------------------------------
 
         self.api_key = (
             api_key
@@ -149,23 +225,10 @@ class ChatService:
         # ------------------------------------------------------------------
         # Chat model
         # ------------------------------------------------------------------
-        #
-        # Priority:
-        #
-        # 1. model passed directly
-        # 2. AGNI_CHAT_MODEL
-        # 3. OPENAI_MODEL
-        # 4. fallback model
-        #
-        # Keeping AGNI_CHAT_MODEL separate allows us to use a different
-        # model for the text chatbot later without changing the voice agent.
-        # ------------------------------------------------------------------
 
         self.model = (
             model
-            or os.getenv(
-                "AGNI_CHAT_MODEL",
-            )
+            or os.getenv("AGNI_CHAT_MODEL")
             or os.getenv(
                 "OPENAI_MODEL",
                 "gpt-5.6-luna",
@@ -173,10 +236,7 @@ class ChatService:
         )
 
         # ------------------------------------------------------------------
-        # Chatbot system instructions
-        # ------------------------------------------------------------------
-        #
-        # Can be overridden through an environment variable later.
+        # Chatbot instructions
         # ------------------------------------------------------------------
 
         self.instructions = os.getenv(
@@ -185,10 +245,7 @@ class ChatService:
         )
 
         # ------------------------------------------------------------------
-        # Maximum size of assistant response
-        # ------------------------------------------------------------------
-        #
-        # Floating chatbot answers should normally be short.
+        # Maximum assistant response size
         # ------------------------------------------------------------------
 
         self.max_output_tokens = int(
@@ -198,40 +255,36 @@ class ChatService:
             )
         )
 
-        # OpenAI client is created only when it is actually needed.
+        # OpenAI client is created only when required.
         self._client: AsyncOpenAI | None = None
 
         # ------------------------------------------------------------------
         # In-memory conversation storage
         # ------------------------------------------------------------------
         #
-        # Structure:
+        # Messages may now contain attachment metadata,
+        # so the value type is Any rather than only str.
+        #
+        # Example:
         #
         # {
         #     "chat_123": [
         #         {
         #             "role": "user",
-        #             "content": "Hello",
-        #             "created_at": "..."
-        #         },
-        #         {
-        #             "role": "assistant",
-        #             "content": "Hi!",
-        #             "created_at": "..."
+        #             "content": "Check this PDF",
+        #             "created_at": "...",
+        #             "attachments": [...]
         #         }
         #     ]
         # }
-        #
-        # Later this can be replaced by database storage.
         # ------------------------------------------------------------------
 
         self._conversations: dict[
             str,
-            list[dict[str, str]],
+            list[dict[str, Any]],
         ] = {}
 
-        # Lock protects conversation data if multiple requests
-        # arrive at nearly the same time.
+        # Protect shared in-memory conversation data.
         self._lock = asyncio.Lock()
 
     # ----------------------------------------------------------------------
@@ -240,13 +293,7 @@ class ChatService:
 
     @staticmethod
     def _now() -> str:
-        """
-        Return the current UTC timestamp.
-
-        Example:
-
-        2026-10-08T09:30:00+00:00
-        """
+        """Return the current UTC timestamp."""
 
         return datetime.now(
             timezone.utc
@@ -259,9 +306,6 @@ class ChatService:
     def _get_client(self) -> AsyncOpenAI:
         """
         Create the OpenAI client only when required.
-
-        This prevents OpenAI initialization from happening immediately
-        when the FastAPI application starts.
         """
 
         if not self.api_key:
@@ -269,13 +313,314 @@ class ChatService:
                 "OPENAI_API_KEY is missing from .env.local"
             )
 
-        # Reuse the same OpenAI client after it has been created.
         if self._client is None:
             self._client = AsyncOpenAI(
                 api_key=self.api_key
             )
 
         return self._client
+
+    # ----------------------------------------------------------------------
+    # Start new conversation
+    # ----------------------------------------------------------------------
+
+    async def start_conversation(
+        self,
+    ) -> tuple[
+        str,
+        list[dict[str, Any]],
+    ]:
+        """
+        Explicitly create a new empty chatbot conversation.
+
+        This method will be used by the frontend button:
+
+            Start new conversation
+
+        We are NOT creating a separate API.
+
+        The existing POST /api/v1/chat endpoint will later call
+        this method when action="new_conversation".
+        """
+
+        conversation_id = (
+            "chat_"
+            + uuid.uuid4().hex
+        )
+
+        async with self._lock:
+
+            self._conversations[
+                conversation_id
+            ] = []
+
+        return conversation_id, []
+
+    # ----------------------------------------------------------------------
+    # Attachment preparation
+    # ----------------------------------------------------------------------
+
+    def _prepare_attachment(
+        self,
+        attachment: ChatAttachmentInput,
+    ) -> dict[str, Any]:
+        """
+        Validate and prepare one attachment.
+
+        Documents become:
+            input_file
+
+        Images become:
+            input_image
+
+        We also create frontend-safe metadata so the response
+        can show which file was attached without returning the
+        actual Base64 file data.
+        """
+
+        # Remove any path information and keep only filename.
+        filename = Path(
+            attachment.filename
+        ).name
+
+        if not filename:
+            raise ChatAttachmentError(
+                "Attachment must have a filename."
+            )
+
+        if not attachment.data:
+            raise ChatAttachmentError(
+                f"{filename} is empty."
+            )
+
+        size_bytes = len(
+            attachment.data
+        )
+
+        if size_bytes > MAX_ATTACHMENT_BYTES:
+
+            max_mb = (
+                MAX_ATTACHMENT_BYTES
+                // (1024 * 1024)
+            )
+
+            raise ChatAttachmentError(
+                f"{filename} is too large. "
+                f"Maximum attachment size is {max_mb} MB."
+            )
+
+        extension = Path(
+            filename
+        ).suffix.lower()
+
+        allowed_extensions = (
+            DOCUMENT_EXTENSIONS
+            | IMAGE_EXTENSIONS
+        )
+
+        if extension not in allowed_extensions:
+
+            raise ChatAttachmentError(
+                "Unsupported attachment type: "
+                f"{extension or 'unknown'}."
+            )
+
+        # Use browser MIME type when available.
+        # Otherwise infer it from the filename.
+        content_type = (
+            attachment.content_type
+            or mimetypes.guess_type(
+                filename
+            )[0]
+            or "application/octet-stream"
+        )
+
+        # Convert file bytes to Base64 because OpenAI Responses
+        # can receive file/image data directly in the request.
+        encoded_data = base64.b64encode(
+            attachment.data
+        ).decode("ascii")
+
+        data_url = (
+            f"data:{content_type};base64,"
+            f"{encoded_data}"
+        )
+
+        # ------------------------------------------------------------------
+        # Image
+        # ------------------------------------------------------------------
+
+        if extension in IMAGE_EXTENSIONS:
+
+            kind = "image"
+
+            model_attachment = {
+                "type": "input_image",
+                "image_url": data_url,
+                "detail": "auto",
+            }
+
+        # ------------------------------------------------------------------
+        # Document
+        # ------------------------------------------------------------------
+
+        else:
+
+            kind = "document"
+
+            model_attachment = {
+                "type": "input_file",
+                "filename": filename,
+                "file_data": data_url,
+            }
+
+        # This metadata is safe to return to frontend.
+        public_attachment = {
+            "name": filename,
+            "content_type": content_type,
+            "size_bytes": size_bytes,
+            "kind": kind,
+        }
+
+        return {
+            "public": public_attachment,
+
+            # Internal model representation.
+            # This will NOT be returned to frontend.
+            "model": model_attachment,
+        }
+
+    # ----------------------------------------------------------------------
+    # Build OpenAI conversation input
+    # ----------------------------------------------------------------------
+
+    def _build_model_input(
+        self,
+        conversation: list[
+            dict[str, Any]
+        ],
+    ) -> list[dict[str, Any]]:
+        """
+        Convert stored conversation history into the format
+        required by OpenAI Responses API.
+        """
+
+        model_input: list[
+            dict[str, Any]
+        ] = []
+
+        for item in conversation:
+
+            role = item["role"]
+
+            # Assistant messages contain text only.
+            if role == "assistant":
+
+                model_input.append(
+                    {
+                        "role": "assistant",
+                        "content": item["content"],
+                    }
+                )
+
+                continue
+
+            # User messages can contain text + attachments.
+            content: list[
+                dict[str, Any]
+            ] = []
+
+            # Add model-ready attachments.
+            for attachment in item.get(
+                "_model_attachments",
+                [],
+            ):
+
+                content.append(
+                    attachment
+                )
+
+            text = (
+                item.get(
+                    "content",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            # Add normal user text.
+            if text:
+
+                content.append(
+                    {
+                        "type": "input_text",
+                        "text": text,
+                    }
+                )
+
+            # If user sends only a file with no text,
+            # give the model a simple instruction.
+            elif item.get(
+                "_model_attachments"
+            ):
+
+                content.append(
+                    {
+                        "type": "input_text",
+                        "text": (
+                            "Please review the attached file "
+                            "and respond helpfully."
+                        ),
+                    }
+                )
+
+            model_input.append(
+                {
+                    "role": "user",
+                    "content": content,
+                }
+            )
+
+        return model_input
+
+    # ----------------------------------------------------------------------
+    # Public conversation copy
+    # ----------------------------------------------------------------------
+
+    @staticmethod
+    def _public_messages(
+        conversation: list[
+            dict[str, Any]
+        ],
+    ) -> list[dict[str, Any]]:
+        """
+        Return messages that are safe for the frontend.
+
+        The private _model_attachments field contains Base64 data,
+        so it must never be returned to the frontend.
+        """
+
+        public_messages: list[
+            dict[str, Any]
+        ] = []
+
+        for item in conversation:
+
+            public_messages.append(
+                {
+                    "role": item["role"],
+                    "content": item["content"],
+                    "created_at": item[
+                        "created_at"
+                    ],
+                    "attachments": item.get(
+                        "attachments",
+                        [],
+                    ),
+                }
+            )
+
+        return public_messages
 
     # ----------------------------------------------------------------------
     # Send chatbot message
@@ -286,58 +631,107 @@ class ChatService:
         *,
         conversation_id: str | None,
         message: str,
+        attachments: list[
+            ChatAttachmentInput
+        ] | None = None,
     ) -> tuple[
         str,
-        list[dict[str, str]],
+        list[dict[str, Any]],
     ]:
         """
-        Send one user message to the Agni text chatbot.
+        Send one message to the Jeeva chatbot.
 
-        Parameters
-        ----------
-        conversation_id:
-            Existing conversation ID.
+        Supported combinations:
+        -----------------------
+        1. Text only
 
-            If None, a new conversation is created.
+        2. Emoji text
+           Example:
+               Hello 👋😊
 
-        message:
-            Text typed by the user.
+        3. Attachment only
 
-        Returns
-        -------
-        tuple:
-            (
-                conversation_id,
-                complete conversation messages
-            )
+        4. Text + attachment
 
-        Example first request:
-
-            conversation_id = None
-            message = "Tell me about Agni"
-
-        Example next request:
-
-            conversation_id = "chat_abc123"
-            message = "What can it do?"
+        If conversation_id is None,
+        a new conversation is automatically created.
         """
 
-        # Remove unwanted spaces around the message.
-        message = message.strip()
+        message = (
+            message
+            or ""
+        ).strip()
 
-        if not message:
+        attachments = (
+            attachments
+            or []
+        )
+
+        # A completely empty request is invalid.
+        if (
+            not message
+            and not attachments
+        ):
+
             raise ValueError(
-                "message must not be empty"
+                "message or attachment is required"
             )
 
+        if len(message) > 4000:
+
+            raise ValueError(
+                "message must contain at most "
+                "4000 characters"
+            )
+
+        if (
+            len(attachments)
+            > MAX_ATTACHMENTS_PER_MESSAGE
+        ):
+
+            raise ChatAttachmentError(
+                "A maximum of "
+                f"{MAX_ATTACHMENTS_PER_MESSAGE} "
+                "attachments is allowed per message."
+            )
+
+        # Prepare and validate attachments before
+        # calling OpenAI.
+        prepared_attachments = [
+            self._prepare_attachment(
+                attachment
+            )
+            for attachment
+            in attachments
+        ]
+
+        # Build the new user message.
+        user_message: dict[str, Any] = {
+            "role": "user",
+            "content": message,
+            "created_at": self._now(),
+
+            # Frontend-visible attachment metadata.
+            "attachments": [
+                item["public"]
+                for item
+                in prepared_attachments
+            ],
+
+            # Internal OpenAI attachment data.
+            "_model_attachments": [
+                item["model"]
+                for item
+                in prepared_attachments
+            ],
+        }
+
         # ------------------------------------------------------------------
-        # Step 1: Create or load conversation
+        # Step 1: Create/load conversation
         # ------------------------------------------------------------------
 
         async with self._lock:
 
-            # If frontend does not provide conversation_id,
-            # this is the first message of a new conversation.
             if conversation_id is None:
 
                 conversation_id = (
@@ -349,53 +743,44 @@ class ChatService:
                     conversation_id
                 ] = []
 
-            # If frontend provides a conversation_id that does not exist,
-            # return a controlled error instead of silently creating one.
             elif (
                 conversation_id
                 not in self._conversations
             ):
+
                 raise ChatConversationNotFound(
                     conversation_id
                 )
 
-            # Get the existing conversation messages.
-            conversation = self._conversations[
-                conversation_id
+            # Make a temporary copy.
+            #
+            # We do NOT permanently save the user message yet.
+            # If OpenAI fails, we do not want a half-finished message
+            # stored in the conversation.
+            conversation_for_model = [
+                dict(item)
+                for item
+                in self._conversations[
+                    conversation_id
+                ]
             ]
 
-            # Save the new user message.
-            conversation.append(
-                {
-                    "role": "user",
-                    "content": message,
-                    "created_at": self._now(),
-                }
+            conversation_for_model.append(
+                user_message
             )
 
-            # --------------------------------------------------------------
-            # Prepare conversation for OpenAI
-            # --------------------------------------------------------------
-            #
-            # OpenAI only needs:
-            #
-            # role
-            # content
-            #
-            # created_at is our own frontend/backend metadata,
-            # so we do not send it to the model.
-            # --------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # Step 2: Build model input
+        # ------------------------------------------------------------------
 
-            model_input = [
-                {
-                    "role": item["role"],
-                    "content": item["content"],
-                }
-                for item in conversation
-            ]
+        model_input = (
+            self._build_model_input(
+                conversation_for_model
+            )
+        )
 
         # ------------------------------------------------------------------
-        # Step 2: Call OpenAI
+        # Step 3: Call OpenAI
         # ------------------------------------------------------------------
 
         client = self._get_client()
@@ -407,31 +792,34 @@ class ChatService:
             max_output_tokens=self.max_output_tokens,
         )
 
-        # Responses API provides combined text through output_text.
         reply = (
             response.output_text
             or ""
         ).strip()
 
-        # Safety fallback in case OpenAI returns no usable text.
         if not reply:
+
             reply = (
                 "Sorry, I couldn't generate a response. "
                 "Please try again."
             )
 
         # ------------------------------------------------------------------
-        # Step 3: Build assistant message
+        # Step 4: Build assistant response
         # ------------------------------------------------------------------
 
-        assistant_message = {
+        assistant_message: dict[
+            str,
+            Any,
+        ] = {
             "role": "assistant",
             "content": reply,
             "created_at": self._now(),
+            "attachments": [],
         }
 
         # ------------------------------------------------------------------
-        # Step 4: Save assistant response
+        # Step 5: Save successful conversation turn
         # ------------------------------------------------------------------
 
         async with self._lock:
@@ -439,19 +827,28 @@ class ChatService:
             self._conversations[
                 conversation_id
             ].append(
+                user_message
+            )
+
+            self._conversations[
+                conversation_id
+            ].append(
                 assistant_message
             )
 
-            # Return a copy rather than exposing our internal list directly.
-            messages = [
-                dict(item)
-                for item in self._conversations[
-                    conversation_id
-                ]
-            ]
+            messages = (
+                self._public_messages(
+                    self._conversations[
+                        conversation_id
+                    ]
+                )
+            )
 
         # ------------------------------------------------------------------
         # Final result used by the API layer
         # ------------------------------------------------------------------
 
-        return conversation_id, messages
+        return (
+            conversation_id,
+            messages,
+        )

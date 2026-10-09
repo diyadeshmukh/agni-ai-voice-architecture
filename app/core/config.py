@@ -1,5 +1,5 @@
 """
-Agni AI - Application Configuration
+Jeeva AI - Application Configuration
 
 Provides the configuration required by the voice/STT services.
 

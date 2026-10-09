@@ -1,5 +1,5 @@
 """
-Agni AI - Voice Registry
+Jeeva AI - Voice Registry
 
 Central source of truth for frontend-selectable voices.
 
@@ -61,7 +61,7 @@ SUPPORTED_VOICE_GENDERS = {
 #
 # Each production voice should have:
 #
-# - stable Agni public ID
+# - stable Jeeva public ID
 # - display name
 # - gender
 # - accent
@@ -69,7 +69,7 @@ SUPPORTED_VOICE_GENDERS = {
 # - environment variable containing the provider voice ID
 #
 # Profiles will be added once the actual ElevenLabs voices
-# for the Agni account have been selected.
+# for the Jeeva account have been selected.
 # ---------------------------------------------------------------------------
 
 VOICE_PROFILES: dict[str, VoiceProfile] = {}

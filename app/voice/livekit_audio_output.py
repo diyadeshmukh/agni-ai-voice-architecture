@@ -1,5 +1,5 @@
 """
-Agni AI - LiveKit Audio Output
+Jeeva AI - LiveKit Audio Output
 
 Publishes synthesized speech audio into a LiveKit room.
 
@@ -236,7 +236,7 @@ class LiveKitAudioOutput:
         # Handle interruption race
         # -----------------------------------------------------------
         #
-        # The user may have interrupted Agni while capture_frame()
+        # The user may have interrupted Jeeva while capture_frame()
         # was completing.
         #
         # In that case the frame may have entered LiveKit's queue

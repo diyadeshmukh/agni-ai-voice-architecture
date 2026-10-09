@@ -1,5 +1,5 @@
 """
-Agni AI - Streaming STT Adapter
+Jeeva AI - Streaming STT Adapter
 
 Connects the LiveKit audio pipeline to the team's streaming STT endpoint.
 

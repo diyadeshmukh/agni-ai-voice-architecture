@@ -1,7 +1,7 @@
 """
-Agni AI - Deepgram Streaming STT Service
+Jeeva AI - Deepgram Streaming STT Service
 
-Streaming speech-to-text service for the Agni AI voice pipeline.
+Streaming speech-to-text service for the Jeeva AI voice pipeline.
 
 Production routing:
 
@@ -559,7 +559,7 @@ class DeepgramSTTService:
         """
         Run Deepgram Flux v2.
 
-        Flux events are normalized back into Agni's existing
+        Flux events are normalized back into Jeeva's existing
         internal STT event protocol:
 
             speech_started
@@ -567,7 +567,7 @@ class DeepgramSTTService:
             final
             utterance_end
 
-        This allows the rest of Agni to remain provider-agnostic.
+        This allows the rest of Jeeva to remain provider-agnostic.
         """
 
         client = AsyncDeepgramClient(
@@ -575,7 +575,7 @@ class DeepgramSTTService:
         )
 
         keyterms = [
-            "Agni AI",
+            "Jeeva AI",
             "Python",
             "list",
             "tuple",
@@ -642,7 +642,7 @@ class DeepgramSTTService:
 
                     error_message = (
                         message.get(
-                            "__agni_error__"
+                            "__jeeva_error__"
                         )
                     )
 
@@ -743,7 +743,7 @@ class DeepgramSTTService:
                 # Helper: normalized speech start
                 #
                 # Flux StartOfTurn is the semantic speech-start signal.
-                # It may contain an empty transcript, so Agni emits
+                # It may contain an empty transcript, so Jeeva emits
                 # speech_started immediately on StartOfTurn.
                 #
                 # A non-empty Update remains the fallback if StartOfTurn
@@ -811,7 +811,7 @@ class DeepgramSTTService:
                     # Flux sends frequent Update messages, sometimes
                     # with an unchanged transcript.
                     #
-                    # Do not flood the Agni event stream with duplicates.
+                    # Do not flood the Jeeva event stream with duplicates.
                     if (
                         transcript
                         == state[
@@ -1029,7 +1029,7 @@ class DeepgramSTTService:
 
                 message_queue.put_nowait(
                     {
-                        "__agni_error__": str(
+                        "__jeeva_error__": str(
                             error
                         )
                     }
@@ -1062,7 +1062,7 @@ class DeepgramSTTService:
             # -----------------------------------------------------------
             # Flux strongly recommends ~80 ms audio chunks.
             #
-            # Incoming Agni audio is PCM16 mono.
+            # Incoming Jeeva audio is PCM16 mono.
             #
             # bytes_per_second:
             #     sample_rate * 2 bytes/sample
@@ -1305,7 +1305,7 @@ class DeepgramSTTService:
         )
 
         keyterms = [
-            "Agni AI",
+            "Jeeva AI",
             "Python",
             "list",
             "tuple",
@@ -1353,7 +1353,7 @@ class DeepgramSTTService:
 
                     error_message = (
                         message.get(
-                            "__agni_error__"
+                            "__jeeva_error__"
                         )
                     )
 
@@ -1653,7 +1653,7 @@ class DeepgramSTTService:
 
                 message_queue.put_nowait(
                     {
-                        "__agni_error__": str(
+                        "__jeeva_error__": str(
                             error
                         )
                     }
@@ -1925,7 +1925,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
         description=(
-            "Agni AI streaming "
+            "Jeeva AI streaming "
             "Deepgram STT service."
         )
     )

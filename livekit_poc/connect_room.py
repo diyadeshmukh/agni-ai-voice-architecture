@@ -8,7 +8,7 @@ from livekit import api, rtc
 load_dotenv(".env.local", override=True)
 
 
-ROOM_NAME = "agni-ai-voice-poc"
+ROOM_NAME = "jeeva-ai-voice-poc"
 PARTICIPANT_ID = "diya-poc"
 
 
@@ -24,7 +24,7 @@ def create_token() -> str:
     token = (
         api.AccessToken(api_key, api_secret)
         .with_identity(PARTICIPANT_ID)
-        .with_name("Agni AI POC")
+        .with_name("Jeeva AI POC")
         .with_grants(
             api.VideoGrants(
                 room_join=True,

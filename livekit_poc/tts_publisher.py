@@ -1,5 +1,5 @@
 """
-Agni AI - LiveKit TTS Publisher
+Jeeva AI - LiveKit TTS Publisher
 
 Generates speech using the configured TTS provider and publishes
 the synthesized PCM audio into a LiveKit room.
@@ -56,12 +56,12 @@ load_dotenv(
 
 ROOM_NAME = os.getenv(
     "LIVEKIT_ROOM_NAME",
-    "agni-ai-voice-poc",
+    "jeeva-ai-voice-poc",
 )
 
 PARTICIPANT_IDENTITY = os.getenv(
     "LIVEKIT_TTS_PUBLISHER_IDENTITY",
-    "agni-tts-publisher",
+    "jeeva-tts-publisher",
 )
 
 
@@ -121,7 +121,7 @@ def create_access_token() -> str:
             PARTICIPANT_IDENTITY
         )
         .with_name(
-            "Agni AI TTS Publisher"
+            "Jeeva AI TTS Publisher"
         )
         .with_grants(
             api.VideoGrants(
@@ -178,7 +178,7 @@ async def main() -> None:
 
     print()
     print("=" * 72)
-    print("AGNI AI - TTS PUBLISHER")
+    print("JEEVA AI - TTS PUBLISHER")
     print("=" * 72)
     print()
 

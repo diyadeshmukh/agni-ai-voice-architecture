@@ -1,5 +1,5 @@
 """
-Agni AI - Per-session runtime state bridge.
+Jeeva AI - Per-session runtime state bridge.
 
 The realtime voice worker runs in a separate subprocess from FastAPI.
 This helper writes a small JSON snapshot that the API process can read
