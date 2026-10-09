@@ -1,7 +1,7 @@
 """
-Agni AI - Speech-to-Text Service
+Jeeva AI - Speech-to-Text Service
 
-This service exposes the STT APIs used by the Agni AI voice pipeline.
+This service exposes the STT APIs used by the Jeeva AI voice pipeline.
 
 Endpoints:
     GET  /
@@ -38,9 +38,9 @@ load_dotenv(".env.local", override=True)
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
-    title="Agni AI STT Service",
+    title="Jeeva AI STT Service",
     description=(
-        "Speech-to-text service for the Agni AI voice pipeline"
+        "Speech-to-text service for the Jeeva AI voice pipeline"
     ),
 )
 
@@ -91,7 +91,7 @@ async def home():
     """
 
     return {
-        "message": "Agni AI STT service is running"
+        "message": "Jeeva AI STT service is running"
     }
 
 

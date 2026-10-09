@@ -1,8 +1,8 @@
 """
-Agni AI - Agent API Service
+Jeeva AI - Agent API Service
 
 Frontend-facing API for starting and managing
-Agni AI voice sessions.
+Jeeva AI voice sessions.
 
 Run:
 
@@ -43,7 +43,7 @@ from app.api.v1.sessions import (  # noqa: E402
     create_sessions_router,
 )
 
-# Text chatbot API used by the floating Agni chat widget.
+# Text chatbot API used by the floating Jeeva chat widget.
 # This is separate from the realtime LiveKit voice-session API.
 from app.api.v1.chat import (  # noqa: E402
     create_chat_router,
@@ -113,9 +113,9 @@ async def lifespan(
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
-    title="Agni AI Agent API",
+    title="Jeeva AI Agent API",
     description=(
-        "Frontend API for Agni AI realtime voice sessions "
+        "Frontend API for Jeeva AI realtime voice sessions "
         "and the floating text chatbot"
     ),
     lifespan=lifespan,
@@ -171,7 +171,7 @@ app.include_router(
     prefix="/api/v1",
 )
 
-# Floating Agni text chatbot.
+# Floating Jeeva text chatbot.
 #
 # Final endpoint:
 # POST /api/v1/chat
@@ -191,6 +191,6 @@ async def home():
 
     return {
         "message": (
-            "Agni AI Agent API is running"
+            "Jeeva AI Agent API is running"
         )
     }

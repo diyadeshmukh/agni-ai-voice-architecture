@@ -1,5 +1,5 @@
 """
-Agni AI - Microphone Audio Test
+Jeeva AI - Microphone Audio Test
 
 Records audio from the selected microphone and saves it
 as a WAV file in the format expected by the STT service.

@@ -1,5 +1,5 @@
 """
-Agni AI - Text-to-Speech Provider Interface
+Jeeva AI - Text-to-Speech Provider Interface
 
 Defines the common contract for text-to-speech providers.
 
@@ -53,7 +53,7 @@ class TTSAudioChunk:
 
 class TTSProvider(ABC):
     """
-    Common interface for all Agni AI TTS providers.
+    Common interface for all Jeeva AI TTS providers.
 
     Possible implementations:
 

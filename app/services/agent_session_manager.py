@@ -1,5 +1,5 @@
 """
-Agni AI - Agent Session Manager
+Jeeva AI - Agent Session Manager
 
 Creates and manages frontend voice-agent sessions.
 
@@ -20,7 +20,7 @@ Each session receives its own:
 - session ID
 - LiveKit room
 - frontend participant identity
-- Agni participant identity
+- Jeeva participant identity
 - language configuration
 - agent subprocess
 
@@ -73,7 +73,7 @@ SUPPORTED_AGENT_LANGUAGES = {
 @dataclass
 class AgentSession:
     """
-    Internal representation of one running Agni voice session.
+    Internal representation of one running Jeeva voice session.
     """
 
     session_id: str
@@ -302,7 +302,7 @@ class AgentSessionManager:
                 participant_identity
             )
             .with_name(
-                "Agni AI Web User"
+                "Jeeva AI Web User"
             )
             .with_grants(
                 api.VideoGrants(
@@ -330,7 +330,7 @@ class AgentSessionManager:
         str,
     ]:
         """
-        Start one isolated Agni agent process.
+        Start one isolated Jeeva agent process.
 
         Returns:
 
@@ -407,7 +407,7 @@ class AgentSessionManager:
             Path(
                 tempfile.gettempdir()
             )
-            / "agni-ai"
+            / "jeeva-ai"
             / "session-readiness"
             / f"{session_id}.ready"
         )
@@ -416,21 +416,21 @@ class AgentSessionManager:
             Path(
                 tempfile.gettempdir()
             )
-            / "agni-ai"
+            / "jeeva-ai"
             / "session-runtime"
             / f"{session_id}.json"
         )
 
         room_name = (
-            f"agni-session-{short_id}"
+            f"jeeva-session-{short_id}"
         )
 
         frontend_identity = (
-            f"agni-web-{short_id}"
+            f"jeeva-web-{short_id}"
         )
 
         agent_identity = (
-            f"agni-agent-{short_id}"
+            f"jeeva-agent-{short_id}"
         )
 
         frontend_token = (
@@ -445,9 +445,11 @@ class AgentSessionManager:
         # --------------------------------------------------------------
         # Dedicated process environment
         #
-        # These AGNI_SESSION_* variables intentionally have different
-        # names from the existing CLI variables so .env.local cannot
-        # accidentally override the per-session configuration.
+        # Technical environment-variable names remain AGNI_* for
+        # backward compatibility with the existing runtime/integration.
+        #
+        # Product-facing branding is Jeeva AI, but changing these
+        # internal variable names is not required for the rebrand.
         # --------------------------------------------------------------
 
         process_env = os.environ.copy()
@@ -485,7 +487,7 @@ class AgentSessionManager:
         ] = str(
             ready_file
         )
-        
+
         process_env[
             "AGNI_SESSION_RUNTIME_FILE"
         ] = str(

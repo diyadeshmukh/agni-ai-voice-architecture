@@ -1,7 +1,7 @@
 """
-Agni AI - OpenAI LLM Provider
+Jeeva AI - OpenAI LLM Provider
 
-Concrete OpenAI implementation of the Agni AI LLMProvider interface.
+Concrete OpenAI implementation of the Jeeva AI LLMProvider interface.
 
 Flow:
 
@@ -33,7 +33,7 @@ load_dotenv(".env.local", override=True)
 
 
 DEFAULT_SYSTEM_INSTRUCTIONS = """
-You are Agni AI, a helpful real-time voice assistant.
+You are Jeeva AI, a helpful real-time voice assistant.
 
 Respond naturally and conversationally.
 
@@ -121,7 +121,7 @@ SESSION_LANGUAGE_INSTRUCTIONS = {
 
 class OpenAILLMProvider(LLMProvider):
     """
-    OpenAI implementation of the Agni AI LLM provider interface.
+    OpenAI implementation of the Jeeva AI LLM provider interface.
 
     response_language is optional.
 

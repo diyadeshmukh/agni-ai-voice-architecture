@@ -1,5 +1,5 @@
 """
-Agni AI - LLM Provider Interface
+Jeeva AI - LLM Provider Interface
 
 Defines the common contract for Large Language Model providers.
 
@@ -29,7 +29,7 @@ from typing import AsyncIterator
 
 class LLMProvider(ABC):
     """
-    Common interface for all Agni AI LLM providers.
+    Common interface for all Jeeva AI LLM providers.
 
     Possible implementations:
 

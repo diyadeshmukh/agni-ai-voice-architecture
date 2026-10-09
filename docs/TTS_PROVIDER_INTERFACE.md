@@ -1,8 +1,8 @@
-# Agni AI - TTS Provider Interface
+# Jeeva AI - TTS Provider Interface
 
 ## Purpose
 
-The Agni AI voice system uses a provider-independent Text-to-Speech (TTS)
+The Jeeva AI voice system uses a provider-independent Text-to-Speech (TTS)
 interface.
 
 The application should depend on `TTSProvider` rather than directly

@@ -1,6 +1,6 @@
 """
 
-Agni AI - Integrated LiveKit Voice Pipeline
+Jeeva AI - Integrated LiveKit Voice Pipeline
 
 
 
@@ -58,7 +58,7 @@ Important behavior:
 
 - OpenAI text can be forwarded to TTS while the LLM is still generating.
 
-- Microphone audio continues to reach STT while Agni is speaking.
+- Microphone audio continues to reach STT while Jeeva is speaking.
 
 - User speech can interrupt the current AI response.
 
@@ -102,6 +102,9 @@ load_dotenv(
 # LiveKit
 # ---------------------------------------------------------------------------
 
+# Technical environment-variable names remain AGNI_* for compatibility.
+# Product-facing text can still use the Jeeva AI branding.
+
 ROOM_NAME = (
     os.getenv("AGNI_SESSION_ROOM_NAME")
     or os.getenv(
@@ -128,6 +131,7 @@ STT_STREAM_ENDPOINT = os.getenv(
     "STT_STREAM_ENDPOINT",
     "ws://127.0.0.1:8000/api/v1/stt/stream",
 )
+
 # User-facing language selection.
 #
 # Examples:
@@ -144,7 +148,7 @@ STT_STREAM_ENDPOINT = os.getenv(
 #   mr
 #   multi
 #
-# Agni STT routing:
+# Jeeva STT routing:
 #
 #   English  -> Flux / flux-general-en
 #   Hindi    -> Flux / flux-general-multi
@@ -190,7 +194,7 @@ SESSION_ID = os.getenv(
 
 METRICS_DIR = (
     Path(tempfile.gettempdir())
-    / "agni-ai"
+    / "jeeva-ai"
     / "session-metrics"
 )
 
@@ -311,7 +315,7 @@ def create_access_token() -> str:
             PARTICIPANT_IDENTITY
         )
         .with_name(
-            "Agni AI Voice Agent"
+            "Jeeva AI Voice Agent"
         )
         .with_grants(
             api.VideoGrants(
@@ -504,7 +508,7 @@ async def process_ai_responses(
             )
             print()
             print("=" * 72)
-            print("AGNI AI - VOICE RESPONSE")
+            print("JEEVA AI - VOICE RESPONSE")
             print("=" * 72)
             print()
             print("User:")
@@ -657,7 +661,7 @@ async def process_ai_responses(
             #
             # This prevents the response worker from being
             # stuck inside ElevenLabs websocket.recv() after
-            # the user has already interrupted Agni.
+            # the user has already interrupted Jeeva.
 
             tts_task = asyncio.create_task(
                 consume_tts_audio()
@@ -798,7 +802,7 @@ async def process_ai_responses(
                 )
                 continue
             print()
-            print("Agni AI:")
+            print("Jeeva AI:")
             print(response_text)
             print()
             
@@ -1063,7 +1067,7 @@ async def receive_stt_events(
 
     Flux:
         speech_started is emitted from Flux StartOfTurn.
-        If Agni is currently speaking, this immediately triggers
+        If Jeeva is currently speaking, this immediately triggers
         a hard barge-in.
 
     Nova:
@@ -1097,7 +1101,7 @@ async def receive_stt_events(
 
         print()
         print(
-            f"[BARGE-IN] User interrupted Agni "
+            f"[BARGE-IN] User interrupted Jeeva "
             f"({reason})"
         )
         # Tell the current LLM/TTS response to stop.
@@ -1407,7 +1411,7 @@ async def consume_audio_track(
     """
     Stream microphone audio continuously to STT.
 
-    The microphone remains active while Agni is generating
+    The microphone remains active while Jeeva is generating
     or speaking so Deepgram can detect user barge-in.
     """
 
@@ -1445,7 +1449,7 @@ async def consume_audio_track(
             # Always send the real microphone signal.
             #
             # Deepgram must continue hearing the user while
-            # Agni speaks so barge-in can be detected.
+            # Jeeva speaks so barge-in can be detected.
             await stt_adapter.send_audio(
                 stt_audio
             )
@@ -1497,7 +1501,7 @@ def signal_session_ready() -> None:
 
 async def main() -> None:
     """
-    Run the integrated Agni AI voice pipeline.
+    Run the integrated Jeeva AI voice pipeline.
 
     LiveKit is connected first.
 
@@ -1525,7 +1529,7 @@ async def main() -> None:
     print()
     print("=" * 72)
     print(
-        "AGNI AI - INTEGRATED VOICE PIPELINE"
+        "JEEVA AI - INTEGRATED VOICE PIPELINE"
     )
     print("=" * 72)
     print()
@@ -1894,7 +1898,7 @@ async def main() -> None:
 
         print()
         print(
-            "Stopping Agni AI "
+            "Stopping Jeeva AI "
             "voice pipeline..."
         )
 
@@ -1964,7 +1968,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print()
         print(
-            "Agni AI voice pipeline "
+            "Jeeva AI voice pipeline "
             "stopped by user."
         )
 

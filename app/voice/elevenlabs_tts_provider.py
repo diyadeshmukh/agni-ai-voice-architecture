@@ -1,7 +1,7 @@
 """
-Agni AI - ElevenLabs TTS Provider
+Jeeva AI - ElevenLabs TTS Provider
 
-Concrete TTS implementation for the Agni AI TTSProvider interface.
+Concrete TTS implementation for the Jeeva AI TTSProvider interface.
 
 Uses ElevenLabs Eleven v3 Conversational through the current
 Text-to-Dialogue WebSocket API.
@@ -57,7 +57,7 @@ load_dotenv(
 
 class ElevenLabsTTSProvider(TTSProvider):
     """
-    ElevenLabs implementation of the Agni AI TTS provider.
+    ElevenLabs implementation of the Jeeva AI TTS provider.
 
     Both complete-text and streaming-text synthesis use the
     ElevenLabs Text-to-Dialogue WebSocket with
@@ -133,12 +133,12 @@ class ElevenLabsTTSProvider(TTSProvider):
             )
         )
 
-        # Agni's current LiveKit output path expects
+        # Jeeva's current LiveKit output path expects
         # raw PCM16 audio at 16 kHz.
         if self.output_format != "pcm_16000":
 
             raise RuntimeError(
-                "Agni AI currently expects "
+                "Jeeva AI currently expects "
                 "ELEVENLABS_OUTPUT_FORMAT=pcm_16000 "
                 "for the LiveKit audio pipeline."
             )
@@ -209,7 +209,7 @@ class ElevenLabsTTSProvider(TTSProvider):
             5. Continue receiving until is_final=True.
 
         ElevenLabs performs its own contextual buffering.
-        Agni only buffers incomplete word fragments locally
+        Jeeva only buffers incomplete word fragments locally
         so token boundaries are not sent as broken words.
         """
 

@@ -1,8 +1,8 @@
 """
-Agni AI - Configuration Catalog API
+Jeeva AI - Configuration Catalog API
 
 Exposes frontend-selectable configuration supported by
-the Agni backend.
+the Jeeva backend.
 
 Provider-specific voice identifiers are intentionally
 never exposed through these endpoints.

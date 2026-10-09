@@ -1,8 +1,8 @@
 """
-Agni AI - Voice Session API
+Jeeva AI - Voice Session API
 
 Frontend-facing endpoints for creating, inspecting,
-and ending Agni AI realtime voice sessions.
+and ending Jeeva AI realtime voice sessions.
 """
 
 from __future__ import annotations

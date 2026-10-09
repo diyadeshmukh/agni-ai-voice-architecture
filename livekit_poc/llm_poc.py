@@ -1,5 +1,5 @@
 """
-Agni AI - OpenAI LLM POC
+Jeeva AI - OpenAI LLM POC
 
 Standalone proof-of-concept for testing the LLM provider.
 
@@ -38,7 +38,7 @@ from app.voice.openai_llm_provider import (
 
 
 DEFAULT_PROMPT = (
-    "Introduce yourself as Agni AI in two short "
+    "Introduce yourself as Jeeva AI in two short "
     "sentences suitable for a voice conversation."
 )
 
@@ -69,7 +69,7 @@ async def main() -> None:
 
     print()
     print("=" * 72)
-    print("AGNI AI - OPENAI LLM POC")
+    print("JEEVA AI - OPENAI LLM POC")
     print("=" * 72)
     print()
 
@@ -87,7 +87,7 @@ async def main() -> None:
     print(prompt)
     print()
 
-    print("Agni AI:")
+    print("Jeeva AI:")
 
     start_time = time.perf_counter()
 

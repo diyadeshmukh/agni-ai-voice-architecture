@@ -1,5 +1,5 @@
 """
-Agni AI - LiveKit TTS Listener
+Jeeva AI - LiveKit TTS Listener
 
 Subscribes to the synthesized "voice-output" track published by
 the TTS publisher and plays the received PCM audio through
@@ -44,12 +44,12 @@ load_dotenv(
 
 ROOM_NAME = os.getenv(
     "LIVEKIT_ROOM_NAME",
-    "agni-ai-voice-poc",
+    "jeeva-ai-voice-poc",
 )
 
 PARTICIPANT_IDENTITY = os.getenv(
     "LIVEKIT_TTS_LISTENER_IDENTITY",
-    "agni-tts-listener",
+    "jeeva-tts-listener",
 )
 
 
@@ -99,7 +99,7 @@ def create_access_token() -> str:
             PARTICIPANT_IDENTITY
         )
         .with_name(
-            "Agni AI TTS Listener"
+            "Jeeva AI TTS Listener"
         )
         .with_grants(
             api.VideoGrants(
@@ -250,7 +250,7 @@ async def main() -> None:
 
     print()
     print("=" * 72)
-    print("AGNI AI - TTS LISTENER")
+    print("JEEVA AI - TTS LISTENER")
     print("=" * 72)
     print()
 

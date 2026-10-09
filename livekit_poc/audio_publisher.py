@@ -1,5 +1,5 @@
 """
-Agni AI - LiveKit Microphone Audio Publisher
+Jeeva AI - LiveKit Microphone Audio Publisher
 
 Captures real microphone audio and publishes it to a LiveKit room.
 
@@ -19,7 +19,7 @@ Local test flow:
         ↓
     LiveKit Room
         ↓
-    Agni AI
+    Jeeva AI
         ↓
     voice-output
         ↓
@@ -101,7 +101,7 @@ def create_agent_session() -> tuple[str, str, str]:
             "language": "english",
             "system_prompt": None,
             "welcome_message": (
-                "Hello! Welcome to Agni AI. "
+                "Hello! Welcome to Jeeva AI. "
                 "How can I help you today?"
             ),
         }
@@ -142,7 +142,7 @@ def select_laptop_microphone(
     Select the laptop's built-in microphone array.
 
     Bluetooth/headset microphones are intentionally ignored because
-    this module is only used as the local Agni development harness.
+    this module is only used as the local Jeeva development harness.
     """
 
     input_devices = media_devices.list_input_devices()
@@ -211,7 +211,7 @@ def select_laptop_speaker(
     Select the laptop's built-in Realtek speaker output.
 
     Bluetooth/headphone outputs are intentionally ignored because
-    this module is only used as the local Agni development harness.
+    this module is only used as the local Jeeva development harness.
     """
 
     output_devices = media_devices.list_output_devices()
@@ -283,7 +283,7 @@ def select_laptop_speaker(
 async def main() -> None:
     """
     Connect to LiveKit, publish laptop microphone audio,
-    and play Agni's voice through the laptop speaker.
+    and play Jeeva's voice through the laptop speaker.
     """
 
     livekit_url = os.getenv(
@@ -302,7 +302,7 @@ async def main() -> None:
     # -----------------------------------------------------------------------
     #
     # The same MediaDevices instance handles both microphone capture
-    # and Agni playback.
+    # and Jeeva playback.
     #
     # This allows the WebRTC audio-processing module to receive
     # speaker playback as the AEC reverse/reference stream.
@@ -348,7 +348,7 @@ async def main() -> None:
     playback_task = None
 
     # -----------------------------------------------------------------------
-    # Play Agni voice
+    # Play Jeeva voice
     # -----------------------------------------------------------------------
 
     async def play_voice_output(
@@ -361,7 +361,7 @@ async def main() -> None:
         await output_player.start()
 
         print(
-            "\nAgni voice playback started "
+            "\nJeeva voice playback started "
             "through laptop speaker"
         )
 
@@ -392,7 +392,7 @@ async def main() -> None:
             return
 
         print(
-            "\nSubscribed to Agni voice track "
+            "\nSubscribed to Jeeva voice track "
             f"'{publication.name}' "
             f"from '{participant.identity}'"
         )
@@ -412,7 +412,7 @@ async def main() -> None:
     # -----------------------------------------------------------------------
 
     print(
-        "Creating Agni AI session..."
+        "Creating Jeeva AI session..."
     )
 
     (

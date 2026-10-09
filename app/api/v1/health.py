@@ -1,5 +1,5 @@
 """
-Agni AI - Health API
+Jeeva AI - Health API
 
 Service health and configuration status.
 """
@@ -37,7 +37,7 @@ def create_health_router(
                 if livekit_configured
                 else "configuration_error"
             ),
-            "service": "Agni Agent API",
+            "service": "Jeeva Agent API",
             "livekit_configured": (
                 livekit_configured
             ),
