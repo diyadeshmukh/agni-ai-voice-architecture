@@ -147,6 +147,13 @@ class EndSessionResponse(BaseModel):
     session_id: str
     status: str
 
+    post_call_result: dict[
+        str,
+        str | bool | int | float | None,
+    ] | None = None
+
+    post_call_error: str | None = None
+
 
 def _session_response(
     session: AgentSession,
@@ -335,6 +342,8 @@ def create_sessions_router(
         return EndSessionResponse(
             session_id=session.session_id,
             status=session.status,
+            post_call_result=session.post_call_result,
+            post_call_error=session.post_call_error,
         )
 
     return router
