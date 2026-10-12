@@ -32,6 +32,7 @@ LiveKit's WebRTC audio processing module to use speaker playback
 as the AEC reverse/reference stream.
 """
 
+import argparse
 import asyncio
 import json
 import logging
@@ -95,15 +96,47 @@ AGENT_API_URL = os.getenv(
 )
 
 
-def create_agent_session() -> tuple[str, str, str]:
+DEMO_LANGUAGE_CONFIG = {
+    "english": {
+        "welcome_message": (
+            "Hello! Welcome to Jeeva AI. "
+            "How can I help you today?"
+        ),
+    },
+    "hindi": {
+        "welcome_message": (
+            "नमस्ते! Jeeva AI में आपका स्वागत है। "
+            "मैं आपकी कैसे मदद कर सकती हूँ?"
+        ),
+    },
+    "hinglish": {
+        "welcome_message": (
+            "Namaste! Jeeva AI mein aapka swagat hai. "
+            "Main aapki kaise help kar sakti hoon?"
+        ),
+    },
+    "marathi": {
+        "welcome_message": (
+            "नमस्कार! Jeeva AI मध्ये आपले स्वागत आहे. "
+            "मी आपली कशी मदत करू शकते?"
+        ),
+    },
+}
+
+def create_agent_session(
+    language: str,
+) -> tuple[str, str, str]:
+    language_config = DEMO_LANGUAGE_CONFIG[
+        language
+    ]
+
     payload = json.dumps(
         {
-            "language": "english",
+            "language": language,
             "system_prompt": None,
-            "welcome_message": (
-                "Hello! Welcome to Jeeva AI. "
-                "How can I help you today?"
-            ),
+            "welcome_message": language_config[
+                "welcome_message"
+            ],
         }
     ).encode("utf-8")
 
@@ -129,6 +162,45 @@ def create_agent_session() -> tuple[str, str, str]:
         data["livekit"]["room_name"],
         data["livekit"]["token"],
     )
+
+
+def end_agent_session(
+    session_id: str,
+) -> None:
+    """
+    End the backend Jeeva session created for this local demo.
+
+    This ensures the agent subprocess, STT stream, and LiveKit
+    resources are cleaned up when the demo client stops.
+    """
+
+    request = urllib.request.Request(
+        (
+            f"{AGENT_API_URL}/api/v1/sessions/"
+            f"{session_id}"
+        ),
+        method="DELETE",
+    )
+
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=15,
+        ) as response:
+            data = json.loads(
+                response.read().decode("utf-8")
+            )
+
+        print(
+            "Backend session ended: "
+            f"{data.get('status', 'unknown')}"
+        )
+
+    except Exception as exc:
+        print(
+            "Warning: could not end backend session: "
+            f"{exc}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -280,7 +352,9 @@ def select_laptop_speaker(
 # Main microphone publishing flow
 # ---------------------------------------------------------------------------
 
-async def main() -> None:
+async def main(
+    language: str,
+) -> None:
     """
     Connect to LiveKit, publish laptop microphone audio,
     and play Jeeva's voice through the laptop speaker.
@@ -419,10 +493,16 @@ async def main() -> None:
         session_id,
         session_room_name,
         session_token,
-    ) = create_agent_session()
+    ) = create_agent_session(
+        language
+    )
 
     print(
         f"Session ID: {session_id}"
+    )
+
+    print(
+        f"Language: {language}"
     )
 
     print(
@@ -544,15 +624,55 @@ async def main() -> None:
             "Disconnected from LiveKit"
         )
 
+        # ---------------------------------------------------------------
+        # End backend Agent session
+        # ---------------------------------------------------------------
+
+        await asyncio.to_thread(
+            end_agent_session,
+            session_id,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Command-line arguments
+# ---------------------------------------------------------------------------
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run the Jeeva AI local voice demo."
+        )
+    )
+
+    parser.add_argument(
+        "--language",
+        type=str.lower,
+        choices=tuple(
+            DEMO_LANGUAGE_CONFIG.keys()
+        ),
+        default="english",
+        help=(
+            "Conversation language. "
+            "Default: english"
+        ),
+    )
+
+    return parser.parse_args()
+
 
 # ---------------------------------------------------------------------------
 # Application entry point
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    args = parse_args()
+
     try:
         asyncio.run(
-            main()
+            main(
+                args.language
+            )
         )
 
     except KeyboardInterrupt:

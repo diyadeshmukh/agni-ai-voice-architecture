@@ -37,7 +37,7 @@ import sys
 import uuid
 import tempfile
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,6 +48,16 @@ from app.voice.voice_registry import (
     get_voice_profile,
 )
 
+from app.services.post_call_data_extractor import (
+    PostCallExtractionResult,
+    PostCallField,
+    build_post_call_fields,
+    build_post_call_transcript,
+)
+
+from app.services.openai_post_call_data_extractor import (
+    OpenAIPostCallDataExtractor,
+)
 
 load_dotenv(
     ".env.local",
@@ -91,6 +101,28 @@ class AgentSession:
 
     created_at: datetime
 
+    # --------------------------------------------------------------
+    # Post-call extraction configuration
+    #
+    # These values come from the Agent's Post-Call Data Extraction
+    # section. The session manager keeps them with the running call
+    # so extraction can happen after the call finishes.
+    # --------------------------------------------------------------
+
+    post_call_model: str | None = None
+
+    post_call_fields: list[PostCallField] = field(
+        default_factory=list
+    )
+
+    # Filled only after post-call extraction has completed.
+    # Pooja's Call persistence layer can later store this result.
+    post_call_result: PostCallExtractionResult | None = None
+
+    # If post-call processing fails, the call itself should still
+    # finish normally. This stores the processing error separately.
+    post_call_error: str | None = None
+
     status: str = "starting"
     ended_at: datetime | None = None
 
@@ -121,7 +153,7 @@ class AgentSession:
             self.status = "starting"
 
         return self.status
-    
+
     def runtime_snapshot(self) -> dict:
         """
         Read transcript and realtime state
@@ -325,6 +357,7 @@ class AgentSessionManager:
         system_prompt: str | None = None,
         voice_id: str | None = None,
         welcome_message: str | None = None,
+        post_call_data_extraction: dict[str, object] | None = None,
     ) -> tuple[
         AgentSession,
         str,
@@ -353,6 +386,105 @@ class AgentSessionManager:
                 "Unsupported language. "
                 "Use english, hindi, "
                 "hinglish, or marathi."
+            )
+
+        # --------------------------------------------------------------
+        # Post-Call Data Extraction configuration
+        # --------------------------------------------------------------
+        #
+        # This configuration comes from:
+        #
+        # Agent.post_call_data_extraction
+        #
+        # Frontend / Agent shape:
+        #
+        # {
+        #     "model": "gpt-4o-mini",
+        #     "fields": [...]
+        # }
+        #
+        # Convert the stored Agent JSON into the runtime objects used by
+        # the post-call extractor.
+        # --------------------------------------------------------------
+
+        post_call_model: str | None = None
+
+        post_call_fields: list[PostCallField] = []
+
+        if post_call_data_extraction:
+
+            # ----------------------------------------------------------
+            # Extraction model
+            # ----------------------------------------------------------
+
+            raw_model = (
+                post_call_data_extraction.get(
+                    "model"
+                )
+            )
+
+            if raw_model is not None:
+
+                if not isinstance(
+                    raw_model,
+                    str,
+                ):
+                    raise ValueError(
+                        "Post-call extraction model "
+                        "must be a string."
+                    )
+
+                post_call_model = (
+                    raw_model.strip()
+                    or None
+                )
+
+            # ----------------------------------------------------------
+            # Extraction fields
+            # ----------------------------------------------------------
+
+            raw_fields = (
+                post_call_data_extraction.get(
+                    "fields",
+                    [],
+                )
+            )
+
+            if raw_fields is None:
+                raw_fields = []
+
+            if not isinstance(
+                raw_fields,
+                list,
+            ):
+                raise ValueError(
+                    "Post-call extraction fields "
+                    "must be a list."
+                )
+
+            field_configs: list[
+                dict[str, object]
+            ] = []
+
+            for field_config in raw_fields:
+
+                if not isinstance(
+                    field_config,
+                    dict,
+                ):
+                    raise ValueError(
+                        "Each post-call extraction "
+                        "field must be an object."
+                    )
+
+                field_configs.append(
+                    field_config
+                )
+
+            post_call_fields = (
+                build_post_call_fields(
+                    field_configs
+                )
             )
 
         selected_voice_id: str | None = None
@@ -411,7 +543,7 @@ class AgentSessionManager:
             / "session-readiness"
             / f"{session_id}.ready"
         )
-        
+
         runtime_file = (
             Path(
                 tempfile.gettempdir()
@@ -503,7 +635,7 @@ class AgentSessionManager:
         ready_file.unlink(
             missing_ok=True
         )
-        
+
         runtime_file.unlink(
             missing_ok=True
         )
@@ -527,7 +659,7 @@ class AgentSessionManager:
             ready_file=ready_file,
             runtime_file=runtime_file,
             room_name=room_name,
-            
+
             frontend_identity=(
                 frontend_identity
             ),
@@ -538,6 +670,9 @@ class AgentSessionManager:
             created_at=datetime.now(
                 timezone.utc
             ),
+            post_call_model=post_call_model,
+
+            post_call_fields=post_call_fields,
         )
 
         self.sessions[
@@ -568,6 +703,67 @@ class AgentSessionManager:
         session.refresh_status()
 
         return session
+
+    # ------------------------------------------------------------------
+    # Post-call extraction
+    # ------------------------------------------------------------------
+
+    async def _run_post_call_extraction(
+        self,
+        session: AgentSession,
+    ) -> None:
+        """
+        Run the Agent's configured Post-Call Data Extraction
+        after the realtime voice process has stopped.
+
+        The transcript already lives in SessionRuntimeState,
+        so there is no need to duplicate transcript collection
+        inside the voice pipeline.
+        """
+
+        # No configured extraction fields means there is
+        # nothing to process for this Agent.
+        if not session.post_call_fields:
+            session.post_call_result = {}
+            session.post_call_error = None
+            return
+
+        runtime = session.runtime_snapshot()
+
+        transcript = build_post_call_transcript(
+            runtime["transcript"]
+        )
+
+        try:
+            extractor = OpenAIPostCallDataExtractor()
+
+            session.post_call_result = (
+                await extractor.extract(
+                    transcript=transcript,
+                    fields=session.post_call_fields,
+                    model=session.post_call_model,
+                )
+            )
+
+            session.post_call_error = None
+
+            print()
+            print(
+                "[POST-CALL] Extraction completed: "
+                f"{session.post_call_result}"
+            )
+
+        except Exception as exc:
+            # Post-call processing must never prevent the call
+            # itself from ending successfully.
+            session.post_call_result = None
+            session.post_call_error = str(exc)
+
+            print()
+            print(
+                "[POST-CALL ERROR] "
+                f"{exc}"
+            )
 
     # ------------------------------------------------------------------
     # End session
@@ -620,6 +816,22 @@ class AgentSessionManager:
             datetime.now(
                 timezone.utc
             )
+        )
+
+        # ----------------------------------------------------------
+        # Post-call processing
+        # ----------------------------------------------------------
+        #
+        # The voice subprocess has stopped, so the persisted
+        # transcript is now treated as the completed call transcript.
+        #
+        # Extraction runs in the parent API process because this
+        # process owns the Agent/session configuration and can later
+        # hand the result to Call History persistence.
+        # ----------------------------------------------------------
+
+        await self._run_post_call_extraction(
+            session
         )
 
         return session
