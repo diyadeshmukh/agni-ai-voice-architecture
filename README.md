@@ -6,23 +6,27 @@
 
 ## Overview
 
-Jeeva AI is a real-time voice-agent system designed to replace a human voice agent in a call flow.
+Jeeva AI is a real-time voice-agent system for conversational voice interactions.
 
-The current repository contains:
+The current repository includes:
 
 - streaming Speech-to-Text (STT)
 - OpenAI LLM integration
-- configurable per-session LLM system prompt
+- configurable per-session system prompt
+- configurable welcome message support
 - streaming ElevenLabs Text-to-Speech (TTS)
-- LiveKit audio transport
+- LiveKit microphone/audio transport
 - hard barge-in / interruption support
 - multilingual STT routing
-- frontend-facing configuration and session APIs
+- Agent session lifecycle APIs
+- post-call structured data extraction
 - local development and diagnostic POCs
 
-The production telephony layer is planned around Exotel. Exotel integration is not implemented yet.
+The current development voice flow uses LiveKit. Production PSTN/telephony transport such as Exotel is a separate integration layer and is not yet part of the production voice runtime in this repository.
 
-### Current local voice flow
+---
+
+## Current Local Voice Flow
 
 ```text
 Laptop Microphone
@@ -31,7 +35,7 @@ Laptop Microphone
      LiveKit
         │
         ▼
-  Streaming STT
+ Streaming STT
    (Deepgram)
         │
         ▼
@@ -47,7 +51,7 @@ Completed Utterance
  ElevenLabs TTS
         │
         ▼
-Streaming PCM Audio
+ Streaming PCM Audio
         │
         ▼
      LiveKit
@@ -57,7 +61,7 @@ Streaming PCM Audio
  Laptop Speaker
 ```
 
-Interim STT transcripts are displayed for diagnostics but are **not sent to OpenAI**. Only completed utterances are sent to the LLM.
+Interim STT transcripts may be shown for diagnostics, but they are **not sent to OpenAI**. Only completed user utterances are dispatched to the LLM.
 
 ---
 
@@ -69,21 +73,28 @@ Interim STT transcripts are displayed for diagnostics but are **not sent to Open
 | LiveKit microphone publishing | ✅ Working | Publishes local microphone audio |
 | LiveKit audio subscription | ✅ Working | Receives remote audio tracks |
 | Streaming STT | ✅ Working | Deepgram realtime transcription |
-| STT language routing | ✅ Working | English, Hindi, Hinglish, Marathi routing |
-| Interim transcripts | ✅ Working | Diagnostic only; never sent to OpenAI |
-| Completed utterance dispatch | ✅ Working | `speech_final` fast path with `utterance_end` fallback |
+| STT language routing | ✅ Working | English, Hindi, Hinglish, Marathi |
+| English end-to-end demo | ✅ Tested | STT → LLM → TTS → LiveKit |
+| Hindi end-to-end demo | ✅ Tested | STT → LLM → TTS → LiveKit |
+| Hinglish end-to-end demo | ✅ Tested | STT → LLM → TTS → LiveKit |
+| Marathi end-to-end demo | ✅ Tested | STT → LLM → TTS → LiveKit |
+| Interim transcripts | ✅ Working | Diagnostic only; not sent to OpenAI |
+| Completed utterance dispatch | ✅ Working | Completed speech is sent once to the LLM |
 | OpenAI LLM | ✅ Working | Streaming response generation |
-| System prompt configuration | ✅ Working | Optional per-session LLM instructions |
-| ElevenLabs TTS | ✅ Working | Streaming Text-to-Dialogue WebSocket |
-| OpenAI → ElevenLabs overlap | ✅ Working | TTS can begin before LLM completion |
-| LiveKit AI audio output | ✅ Working | Publishes `voice-output` track |
-| Local speaker playback | ✅ Working | `audio_publisher.py` plays `voice-output` |
-| Hard barge-in | ✅ Core implemented | Cancels active LLM/TTS and clears queued AI audio |
-| Local first-attempt barge-in | ⚠️ POC limitation | Detection can be inconsistent with laptop speaker/microphone acoustics |
-| Agent API | ✅ Working | Language catalog, health, and session lifecycle APIs |
-| Conversation history | 🚧 Pending | Current LLM request is stateless |
-| Exotel telephony | 🚧 Planned | Production phone-call transport not implemented yet |
-| Production orchestration | 🚧 Planned | Persistent sessions/workers/storage can be added later |
+| Per-session system prompt | ✅ Working | Optional runtime LLM instructions |
+| Welcome message | ✅ Working | Session-specific welcome message support |
+| ElevenLabs TTS | ✅ Working | Streaming speech generation |
+| OpenAI → ElevenLabs overlap | ✅ Working | TTS can begin before the LLM fully finishes |
+| LiveKit AI audio output | ✅ Working | Publishes `voice-output` |
+| Local speaker playback | ✅ Working | `audio_publisher.py` plays agent audio |
+| Hard barge-in | ✅ Implemented | Cancels active response and clears queued AI audio |
+| Latest demo barge-in validation | ⚠️ Not re-tested | Core exists, but it was not re-demonstrated in the latest multilingual execution pass |
+| Agent Session API | ✅ Working | Create, inspect, and stop runtime sessions |
+| Clean local session shutdown | ✅ Tested | Ctrl+C disconnects LiveKit and ends backend session |
+| Post-call data extraction | ✅ Working | Structured extraction runs when a session ends |
+| Conversation history in voice LLM | 🚧 Pending | Current voice LLM request flow is not yet a persistent conversational memory system |
+| Exotel telephony | 🚧 Planned | Production phone-call media transport still needs integration |
+| Production orchestration | 🚧 Planned | Current session orchestration is suitable for local/demo execution |
 
 ---
 
@@ -102,28 +113,28 @@ Interim STT transcripts are displayed for diagnostics but are **not sent to Open
                                 │
                                 ▼
                     ┌───────────────────────┐
-                    │     Deepgram STT      │
+                    │      Deepgram STT     │
                     │  Flux / Nova routing  │
                     └───────────┬───────────┘
                                 │
-                        Completed Utterance
+                      Completed Utterance
                                 │
                                 ▼
                     ┌───────────────────────┐
                     │      OpenAI LLM       │
-                    │   Streaming Response  │
+                    │  Streaming Response   │
                     └───────────┬───────────┘
                                 │
                                 ▼
                     ┌───────────────────────┐
-                    │     ElevenLabs TTS    │
-                    │    Streaming PCM16    │
+                    │    ElevenLabs TTS     │
+                    │   Streaming PCM16     │
                     └───────────┬───────────┘
                                 │
                                 ▼
                     ┌───────────────────────┐
                     │        LiveKit        │
-                    │     voice-output      │
+                    │      voice-output     │
                     └───────────┬───────────┘
                                 │
                                 ▼
@@ -136,17 +147,16 @@ Interim STT transcripts are displayed for diagnostics but are **not sent to Open
 
 ## STT Language Routing
 
-The user-facing language modes are:
+The current user-facing demo modes are:
 
 | Mode | Deepgram backend | Model / configuration |
 |---|---|---|
 | `english` | Flux | `flux-general-en` |
-| `hindi` | Flux | `flux-general-multi` + `language_hint=["hi"]` |
-| `hinglish` | Flux | `flux-general-multi` + `language_hint=["en", "hi"]` |
-| `marathi` | Nova-3 | `nova-3` + `language="mr"` |
-| `multi` | Nova-3 | Legacy/debug multilingual mode |
+| `hindi` | Flux | multilingual Flux with Hindi routing |
+| `hinglish` | Flux | multilingual Flux with English/Hindi routing |
+| `marathi` | Nova-3 | `nova-3` with Marathi language routing |
 
-Aliases such as `en`, `en-IN`, `hi`, and `mr` are normalized by the STT API.
+The STT API also normalizes supported aliases where configured.
 
 ### Streaming STT endpoint
 
@@ -154,7 +164,7 @@ Aliases such as `en`, `en-IN`, `hi`, and `mr` are normalized by the STT API.
 ws://127.0.0.1:8000/api/v1/stt/stream?language=english
 ```
 
-Supported normalized STT events include:
+Normalized STT events include:
 
 ```text
 partial
@@ -166,75 +176,74 @@ incomplete_speech
 error
 ```
 
-For Flux, `StartOfTurn` is normalized to `speech_started`. `StartOfTurn` may contain an empty transcript, so Jeeva emits `speech_started` immediately instead of waiting for transcript text.
+For Flux-based modes, semantic turn-start events can be normalized to `speech_started`.
 
 ---
 
 ## Completed-Utterance LLM Design
 
-The voice pipeline minimizes unnecessary LLM requests.
+The pipeline avoids sending interim speech to the LLM.
 
 ```text
 [PARTIAL] Explain AI...
         ↓
-Displayed for diagnostics
+Diagnostic output only
         ↓
 No OpenAI request
 
-[FINAL] Explain AI in detail. [SPEECH FINAL]
+[FINAL] Explain AI in detail.
         ↓
-Completed utterance dispatched immediately
+Completed utterance dispatched
         ↓
 One OpenAI request
 ```
 
-`speech_final=True` is the fast path. `utterance_end` remains as a fallback so the same user turn is not sent twice.
+The completed-utterance path prevents:
 
-This prevents duplicate LLM calls, unnecessary token usage, responses to unfinished speech, and repeated AI replies from interim transcript text.
+- duplicate LLM calls
+- responses to unfinished speech
+- unnecessary token usage
+- repeated AI replies caused by interim transcript updates
 
 ---
 
 ## Barge-In / Interruption
 
-The microphone remains connected to STT while Jeeva is speaking.
+The microphone continues to flow to STT while Jeeva is speaking.
 
-For Flux languages, semantic `StartOfTurn` is used as the primary hard-interrupt signal:
+The intended interruption flow is:
 
 ```text
 Jeeva speaking
     ↓
 User begins speaking
     ↓
-Flux StartOfTurn
+speech_started / confirmed user speech
     ↓
-speech_started
-    ↓
-interrupt_event set
+interrupt event set
     ↓
 Current LLM/TTS response cancelled
     ↓
-LiveKit queued AI audio cleared
+Queued AI audio cleared
     ↓
 User's completed utterance is processed
     ↓
-Jeeva starts the new response
+Jeeva begins the new response
 ```
 
-For Nova-3 / Marathi, raw VAD `speech_started` does not immediately interrupt. A non-empty partial or final transcript confirms the interruption.
+`LiveKitAudioOutput` is designed to reject remaining chunks from an interrupted response and clear queued audio before the next response begins.
 
-`LiveKitAudioOutput` rejects remaining chunks from an interrupted response and clears queued audio before the next response begins.
+### Latest demo note
 
-### Local POC limitation
+The barge-in implementation remains present in the codebase, but **barge-in was not re-tested during the latest multilingual execution-demo pass**.
 
-The core interruption path is implemented and runtime-tested. With a laptop speaker and laptop microphone, the **first** interruption attempt can still be missed because of the local acoustic/audio-processing path. Repeated speech can trigger the interruption correctly.
-
-This local issue should not be treated as proof that the production telephony path will behave the same way. The production Exotel media path will be a separate audio transport and must be tested independently once integrated.
+Do not treat the latest language demo results as a fresh validation of interruption behavior.
 
 ---
 
 ## LLM Architecture
 
-The LLM layer uses a provider interface so the main pipeline is not tightly coupled to one implementation.
+The LLM layer uses a provider abstraction so the main pipeline is not tightly coupled to one implementation.
 
 Provider interface:
 
@@ -261,31 +270,33 @@ async def stream_response(
 Typical configuration:
 
 ```env
-OPENAI_MODEL=gpt-5.6-luna
+OPENAI_API_KEY=<your-key>
+OPENAI_MODEL=<your-model>
 OPENAI_MAX_OUTPUT_TOKENS=120
 ```
 
-OpenAI text is streamed toward ElevenLabs rather than waiting for the entire LLM response to finish first.
+OpenAI text is streamed toward ElevenLabs rather than waiting for the entire LLM response to complete.
 
 ### Per-session system prompt
 
-The Agent API supports an optional `system_prompt` when creating a voice session.
+The Agent Session API can pass an optional system prompt into the runtime session.
 
-The value is passed into the dedicated session subprocess through:
+Jeeva is the product-facing name, but existing internal environment-variable names remain under the **`AGNI_*` namespace for compatibility**.
+
+Examples of internal session variables include:
 
 ```text
-JEEVA_SESSION_SYSTEM_PROMPT
+AGNI_SESSION_ROOM_NAME
+AGNI_SESSION_PARTICIPANT_IDENTITY
+AGNI_SESSION_LANGUAGE
+AGNI_SESSION_SYSTEM_PROMPT
 ```
 
-The integrated voice pipeline then initializes the OpenAI provider with that prompt as its instructions.
-
-If no session-specific prompt is provided, the existing default LLM behavior is used.
+These are internal runtime values and normally do not need to be set manually by a frontend client.
 
 ---
 
 ## TTS Architecture
-
-Current TTS path:
 
 ```text
 OpenAI text stream
@@ -294,9 +305,7 @@ OpenAI text stream
        ↓
 ElevenLabsTTSProvider
        ↓
-Text-to-Dialogue WebSocket
-       ↓
- Streaming PCM16
+Streaming audio
        ↓
    TTSAudioChunk
        ↓
@@ -317,298 +326,175 @@ LiveKitAudioOutput
 | Sample rate | 16,000 Hz |
 | Channels | Mono |
 | ElevenLabs output | `pcm_16000` |
-| TTS model | `eleven_v3_conversational` |
 
-The current provider uses the ElevenLabs WebSocket directly through the `websockets` package.
+Provider-specific model and voice IDs are configured through environment variables.
 
 ---
 
-## Frontend Agent API
+## Agent Session API
 
-The frontend-facing Agent API exposes configuration discovery, session lifecycle, and service health endpoints.
-
-Run it with:
+Run the Agent API with:
 
 ```powershell
 uvicorn services.agent_service.main:app --port 8001
 ```
 
-Swagger/OpenAPI is available at:
+Swagger/OpenAPI:
 
 ```text
 http://127.0.0.1:8001/docs
 ```
 
-### Configuration catalog
+> **Windows note:** do not use `--reload` for the Agent API during voice-session testing. Reloading can break or duplicate subprocess/session behavior.
+
+### Session endpoints
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `GET` | `/api/v1/catalog/languages` | List supported agent languages |
-
-Current supported languages:
-
-```text
-english
-hindi
-hinglish
-marathi
-```
-
-Example response:
-
-```json
-{
-  "languages": [
-    {
-      "id": "english",
-      "label": "English"
-    },
-    {
-      "id": "hindi",
-      "label": "Hindi"
-    },
-    {
-      "id": "hinglish",
-      "label": "Hinglish"
-    },
-    {
-      "id": "marathi",
-      "label": "Marathi"
-    }
-  ]
-}
-```
-
-### Session runtime
-
-| Method | Endpoint | Purpose |
-|---|---|---|
-| `POST` | `/api/v1/sessions` | Start an Jeeva voice session |
+| `POST` | `/api/v1/sessions` | Start a Jeeva voice session |
 | `GET` | `/api/v1/sessions/{session_id}` | Read session status |
-| `DELETE` | `/api/v1/sessions/{session_id}` | Stop the session |
+| `DELETE` | `/api/v1/sessions/{session_id}` | Stop the session and return post-call extraction output |
 
-Example create request:
+A session create request can include runtime configuration such as language, system prompt, welcome message, and post-call extraction settings when used by the corresponding frontend/backend integration.
 
-```json
-{
-  "language": "english",
-  "system_prompt": "You are a helpful customer support assistant."
-}
-```
-
-`system_prompt` is optional.
-
-The selected language is validated by the Agent API before a session is created.
-
-If an unsupported language is supplied, request validation fails before the voice-agent subprocess is started.
-
-When a session is created, the Agent API:
-
-1. generates a unique session ID
-2. generates a unique LiveKit room
-3. creates unique frontend and agent participant identities
-4. creates a short-lived frontend LiveKit token
-5. starts a dedicated `livekit_poc.audio_subscriber` subprocess
-6. passes per-session configuration to that subprocess
-
-Per-session configuration currently includes:
-
-```text
-JEEVA_SESSION_ROOM_NAME
-JEEVA_SESSION_PARTICIPANT_IDENTITY
-JEEVA_SESSION_LANGUAGE
-JEEVA_SESSION_SYSTEM_PROMPT
-```
-
-A successful create-session response includes:
-
-- `session_id`
-- current session `status`
-- selected `language`
-- LiveKit URL
-- generated room name
-- short-lived frontend participant token
-- expected microphone track name: `microphone`
-- expected agent audio track name: `voice-output`
-- session creation time
-
-Example response shape:
-
-```json
-{
-  "session_id": "876ff8bdca15475b836288049ab9a848",
-  "status": "active",
-  "language": "english",
-  "livekit": {
-    "url": "wss://...",
-    "room_name": "jeeva-session-876ff8bdca15",
-    "token": "..."
-  },
-  "tracks": {
-    "microphone": "microphone",
-    "agent_audio": "voice-output"
-  },
-  "created_at": "..."
-}
-```
-
-### Health
-
-```text
-GET /api/v1/health
-```
-
-Example response:
-
-```json
-{
-  "status": "ok",
-  "service": "Jeeva Agent API",
-  "livekit_configured": true
-}
-```
-
-`AgentSessionManager` currently keeps active session state in memory and launches one `audio_subscriber` subprocess per voice session.
-
-Persistent or distributed production session orchestration is not implemented yet.
+A successful session creation starts a dedicated voice-agent subprocess and returns the session/LiveKit information needed by the local client or frontend.
 
 ---
 
-## Project Structure
+## Post-Call Data Extraction
 
-```text
-jeeva-ai/
-│
-├── README.md
-├── .gitignore
-├── mic_test.py
-├── requirements.txt
-│
-├── app/
-│   ├── __init__.py
-│   ├── database.py
-│   │
-│   ├── api/
-│   │   ├── __init__.py
-│   │   └── v1/
-│   │       ├── __init__.py
-│   │       ├── catalog.py
-│   │       ├── health.py
-│   │       ├── sessions.py
-│   │       └── stt.py
-│   │
-│   ├── core/
-│   │   ├── __init__.py
-│   │   └── config.py
-│   │
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── agent_session_manager.py
-│   │   └── stt_service.py
-│   │
-│   └── voice/
-│       ├── __init__.py
-│       ├── elevenlabs_tts_provider.py
-│       ├── livekit_audio_output.py
-│       ├── llm_provider.py
-│       ├── openai_llm_provider.py
-│       ├── stt_stream_adapter.py
-│       └── tts_provider.py
-│
-├── docs/
-│   └── TTS_PROVIDER_INTERFACE.md
-│
-├── livekit_poc/
-│   ├── __init__.py
-│   ├── audio_publisher.py
-│   ├── audio_subscriber.py
-│   ├── connect_room.py
-│   ├── llm_poc.py
-│   ├── tts_listener.py
-│   └── tts_publisher.py
-│
-└── services/
-    ├── agent_service/
-    │   ├── __init__.py
-    │   └── main.py
-    │
-    └── stt_service/
-        ├── __init__.py
-        └── main.py
+Jeeva supports structured extraction from the persisted runtime transcript when a session ends.
+
+Supported extraction field types:
+
+| Type | Purpose |
+|---|---|
+| `text` | Free-text value |
+| `selector` | One value from configured choices |
+| `yes_no` | Boolean value |
+| `number` | Numeric value |
+
+Design rules:
+
+- extraction runs after the voice session is stopped
+- the post-call model is independent from the conversational model
+- missing information is returned as `null`
+- the extractor must not invent information that is absent from the transcript
+- selector values are constrained to configured choices
+
+The session end response can include:
+
+```json
+{
+  "status": "ended",
+  "post_call_result": {},
+  "post_call_error": null
+}
 ```
 
-`audio_buffer.py` and the old HTTP `stt_adapter.py` have been removed because the active voice pipeline uses continuous streaming through `stt_stream_adapter.py`.
-
-The old combined `app/api/v1/agent.py` API module has also been removed. Frontend-facing API responsibilities are now separated into:
+The post-call runtime is implemented in:
 
 ```text
-catalog.py
-health.py
-sessions.py
+app/services/post_call_data_extractor.py
+app/services/openai_post_call_data_extractor.py
 ```
 
-`latency_log.csv` is generated during STT testing and should remain ignored by Git.
+The Agent-side post-call configuration contract is defined separately from runtime extraction so it can be integrated with the main Agent CRUD/DB layer.
 
 ---
 
-## Main Components
+## Local Demo Execution
 
-### `livekit_poc/audio_subscriber.py`
+The current execution-demo flow uses **three terminals**.
 
-This is the current integrated Jeeva voice-agent pipeline.
-
-It connects to LiveKit, receives microphone audio, streams it to STT, processes completed utterances, streams OpenAI output into ElevenLabs, publishes `voice-output`, and handles hard interruption.
-
-For frontend-created sessions, it receives session-specific configuration through `JEEVA_SESSION_*` environment variables.
-
-### `livekit_poc/audio_publisher.py`
-
-This is a **local development harness**, not the planned production telephony client.
-
-It currently uses the laptop microphone for input and laptop speakers for output.
-
-The local full-duplex setup enables AEC and keeps noise suppression and automatic gain control disabled.
-
-The publisher also subscribes to `voice-output`, so a separate `tts_listener` is not required for the integrated local POC.
-
-When `JEEVA_SESSION_ROOM_NAME` is available, the publisher can use the session-specific room name. Otherwise it falls back to the normal local `LIVEKIT_ROOM_NAME` configuration.
-
-### `livekit_poc/tts_listener.py`
-
-Standalone diagnostic listener for `voice-output`.
-
-Keep it for isolated TTS / LiveKit testing; it is not part of the normal integrated three-terminal local run.
-
-### `livekit_poc/tts_publisher.py`
-
-Standalone ElevenLabs → LiveKit TTS diagnostic.
+### Terminal 1 — STT service
 
 ```powershell
-python -m livekit_poc.tts_publisher "Hello from Jeeva AI."
+conda activate agni-ai
+uvicorn services.stt_service.main:app --port 8000
 ```
 
-### `livekit_poc/llm_poc.py`
-
-Standalone OpenAI diagnostic.
+### Terminal 2 — Agent API
 
 ```powershell
-python -m livekit_poc.llm_poc "Reply only with: Jeeva AI ready."
+conda activate agni-ai
+uvicorn services.agent_service.main:app --port 8001
 ```
 
-This command makes a real OpenAI API request and consumes provider usage.
+Do **not** add `--reload` on Windows for this service.
+
+### Terminal 3 — Local microphone + speaker client
+
+English:
+
+```powershell
+python -m livekit_poc.audio_publisher --language english
+```
+
+Hindi:
+
+```powershell
+python -m livekit_poc.audio_publisher --language hindi
+```
+
+Hinglish:
+
+```powershell
+python -m livekit_poc.audio_publisher --language hinglish
+```
+
+Marathi:
+
+```powershell
+python -m livekit_poc.audio_publisher --language marathi
+```
+
+The latest execution-demo pass successfully completed end-to-end turns in all four language modes.
+
+### What the publisher does
+
+The local publisher:
+
+1. selects the requested demo language
+2. creates an Agent API session
+3. receives the generated LiveKit session information
+4. connects the laptop microphone to the LiveKit room
+5. receives the Jeeva `voice-output` track
+6. plays generated audio through the local speaker
+7. disconnects cleanly on Ctrl+C
+8. calls the Agent API to end the backend session
+
+Expected shutdown output includes:
+
+```text
+Disconnected from LiveKit
+Backend session ended: ended
+Application stopped by user.
+```
+
+This clean shutdown prevents demo sessions from being left active after the local client exits.
+
+### Optional Agent API URL
+
+The local publisher can use the configured Agent API URL.
+
+Example:
+
+```env
+AGENT_API_URL=http://127.0.0.1:8001
+```
 
 ---
 
 ## Development Environment
 
-Current development setup:
+Current local development setup:
 
 | Component | Current Setup |
 |---|---|
 | Operating system | Windows |
 | Environment | Conda |
-| Environment name | `jeeva-ai` |
-| Python | 3.11.x |
+| Environment name | `agni-ai` |
 | STT | Deepgram |
 | LLM | OpenAI |
 | TTS | ElevenLabs |
@@ -618,7 +504,7 @@ Current development setup:
 Activate the environment:
 
 ```powershell
-conda activate jeeva-ai
+conda activate agni-ai
 ```
 
 Install dependencies:
@@ -631,146 +517,152 @@ pip install -r requirements.txt
 
 ## Environment Variables
 
-Local credentials and provider configuration are stored in `.env.local`.
+Local credentials and provider configuration belong in local environment files such as `.env` or `.env.local`.
 
-Example names only — never put real credentials in this README:
+Never put real credentials in this README.
+
+Example names only:
 
 ```env
 DEEPGRAM_API_KEY=<your-key>
 
 OPENAI_API_KEY=<your-key>
-OPENAI_MODEL=gpt-5.6-luna
+OPENAI_MODEL=<your-model>
 OPENAI_MAX_OUTPUT_TOKENS=120
 
 ELEVENLABS_API_KEY=<your-key>
 ELEVENLABS_VOICE_ID=<your-voice-id>
-ELEVENLABS_MODEL_ID=eleven_v3_conversational
+ELEVENLABS_MODEL_ID=<your-model-id>
 ELEVENLABS_OUTPUT_FORMAT=pcm_16000
 
 LIVEKIT_URL=<your-livekit-url>
 LIVEKIT_API_KEY=<your-livekit-api-key>
 LIVEKIT_API_SECRET=<your-livekit-api-secret>
-LIVEKIT_ROOM_NAME=jeeva-ai-voice-poc
+LIVEKIT_ROOM_NAME=<your-room-name>
 
 STT_STREAM_ENDPOINT=ws://127.0.0.1:8000/api/v1/stt/stream
-JEEVA_STT_LANGUAGE=english
-
-JEEVA_FRONTEND_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173
+AGENT_API_URL=http://127.0.0.1:8001
 ```
 
-The Agent API passes per-session room, participant, language, and system-prompt configuration to the spawned agent subprocess using `JEEVA_SESSION_*` environment variables.
+### Branding and internal configuration names
 
-Current internal session variables include:
+Use **Jeeva / Jeeva AI** for product-facing text.
 
-```text
-JEEVA_SESSION_ROOM_NAME
-JEEVA_SESSION_PARTICIPANT_IDENTITY
-JEEVA_SESSION_LANGUAGE
-JEEVA_SESSION_SYSTEM_PROMPT
-```
-
-These are internal session values and normally do not need to be set manually.
+Existing internal technical environment variables remain **`AGNI_*`** for compatibility. Do not rename internal configuration keys to `JEEVA_*` unless the corresponding code migration is deliberately performed across the whole runtime.
 
 ---
 
-## Running the Integrated Local Voice POC
+## Project Structure
 
-The normal local integrated test uses **three terminals**.
-
-### Terminal 1 — STT service
-
-```powershell
-uvicorn services.stt_service.main:app --port 8000
-```
-
-For local voice testing, avoid `--reload` because a reload can interrupt the active streaming WebSocket.
-
-### Terminal 2 — Integrated voice pipeline
-
-Choose a language, for example English:
-
-```powershell
-$env:JEEVA_STT_LANGUAGE="english"
-
-python -m livekit_poc.audio_subscriber
-```
-
-Other supported values:
+Key runtime files include:
 
 ```text
-hindi
-hinglish
-marathi
+agni-ai/
+│
+├── README.md
+├── requirements.txt
+│
+├── app/
+│   ├── api/
+│   │   └── v1/
+│   │       ├── agents.py
+│   │       ├── catalog.py
+│   │       ├── health.py
+│   │       ├── sessions.py
+│   │       └── stt.py
+│   │
+│   ├── services/
+│   │   ├── agent_session_manager.py
+│   │   ├── openai_post_call_data_extractor.py
+│   │   ├── post_call_data_extractor.py
+│   │   └── stt_service.py
+│   │
+│   └── voice/
+│       ├── elevenlabs_tts_provider.py
+│       ├── livekit_audio_output.py
+│       ├── llm_provider.py
+│       ├── openai_llm_provider.py
+│       ├── stt_stream_adapter.py
+│       └── tts_provider.py
+│
+├── livekit_poc/
+│   ├── audio_publisher.py
+│   ├── audio_subscriber.py
+│   ├── connect_room.py
+│   ├── llm_poc.py
+│   ├── tts_listener.py
+│   └── tts_publisher.py
+│
+└── services/
+    ├── agent_service/
+    │   └── main.py
+    └── stt_service/
+        └── main.py
 ```
 
-### Terminal 3 — Local microphone + speaker client
-
-```powershell
-python -m livekit_poc.audio_publisher
-```
-
-Expected startup includes the selected laptop microphone and speaker, LiveKit connection, microphone publishing, and local `voice-output` playback.
+`latency_log.csv`, Python caches, local audio files, virtual environments, and credential files should remain ignored by Git.
 
 ---
 
-## Running the Frontend Agent API
+## Main Components
 
-The STT service must be available on port `8000` when a real voice session is created.
+### `livekit_poc/audio_subscriber.py`
 
-### Terminal 1 — STT service
+This is the integrated Jeeva voice-agent runtime.
+
+It:
+
+- connects to LiveKit
+- receives microphone audio
+- streams audio to STT
+- processes completed utterances
+- streams OpenAI output
+- sends text into ElevenLabs TTS
+- publishes `voice-output`
+- handles interruption/barge-in behavior
+
+For API-created sessions, runtime configuration is supplied by the Agent Session Manager through internal environment variables.
+
+### `livekit_poc/audio_publisher.py`
+
+This is the local execution/demo client.
+
+It now supports:
+
+```text
+--language english
+--language hindi
+--language hinglish
+--language marathi
+```
+
+It uses the laptop microphone for input and the local speaker for Jeeva audio output.
+
+The publisher also performs clean backend-session shutdown when the local process is stopped.
+
+### `livekit_poc/tts_listener.py`
+
+Standalone diagnostic listener for `voice-output`.
+
+Use it for isolated TTS/LiveKit troubleshooting; it is not required in the normal Agent API demo flow.
+
+### `livekit_poc/tts_publisher.py`
+
+Standalone TTS diagnostic:
 
 ```powershell
-uvicorn services.stt_service.main:app --port 8000
+python -m livekit_poc.tts_publisher "Hello from Jeeva AI."
 ```
 
-### Terminal 2 — Agent API
+### `livekit_poc/llm_poc.py`
+
+Standalone OpenAI diagnostic:
 
 ```powershell
-uvicorn services.agent_service.main:app --port 8001
+python -m livekit_poc.llm_poc "Reply only with: Jeeva AI ready."
 ```
 
-Swagger/OpenAPI is available at:
-
-```text
-http://127.0.0.1:8001/docs
-```
-
-Current frontend-facing endpoints:
-
-```text
-GET    /api/v1/catalog/languages
-
-POST   /api/v1/sessions
-GET    /api/v1/sessions/{session_id}
-DELETE /api/v1/sessions/{session_id}
-
-GET    /api/v1/health
-```
-
-When the frontend calls `POST /api/v1/sessions`, the Agent API creates a unique LiveKit room/token and starts a dedicated Jeeva `audio_subscriber` subprocess for that session.
-
-The frontend is responsible for:
-
-```text
-connecting to the returned LiveKit room
-        ↓
-publishing microphone track "microphone"
-        ↓
-receiving/subscribing to "voice-output"
-        ↓
-playing Jeeva's generated audio
-```
-
-The Agent API never exposes backend provider secrets such as:
-
-```text
-OPENAI_API_KEY
-DEEPGRAM_API_KEY
-ELEVENLABS_API_KEY
-LIVEKIT_API_SECRET
-```
-
-Only the temporary frontend LiveKit participant token is returned for room access.
+This command makes a real OpenAI API request and may consume provider usage.
 
 ---
 
@@ -802,7 +694,7 @@ Run the listener:
 python -m livekit_poc.tts_listener
 ```
 
-Then run the publisher:
+Then run:
 
 ```powershell
 python -m livekit_poc.tts_publisher "Hello from Jeeva AI."
@@ -812,7 +704,7 @@ python -m livekit_poc.tts_publisher "Hello from Jeeva AI."
 
 ## Response Latency Design
 
-Two important latency optimizations are already part of the pipeline:
+The pipeline uses streaming to reduce perceived response latency:
 
 ```text
 Deepgram completed speech
@@ -823,93 +715,78 @@ OpenAI starts streaming
         ↓
 First useful text forwarded to ElevenLabs
         ↓
-TTS can start before the LLM has finished its full response
+TTS can start before the LLM finishes
 ```
 
-The runtime logs important stages including STT latency, LLM first text, LLM completion, ElevenLabs first audio, and playback completion.
+Runtime diagnostics may log stages such as:
 
-`latency_log.csv` records STT response timing for diagnostic use. It is not a production benchmark.
+- STT completion
+- LLM first text
+- LLM completion
+- ElevenLabs first audio
+- playback completion
+
+`latency_log.csv` is a local diagnostic artifact, not a production benchmark.
 
 ---
 
 ## Local Echo / Feedback Handling
 
-The local development publisher uses LiveKit `MediaDevices` for both input and output so the audio-processing path can use speaker playback as the AEC reference.
+The local laptop demo is a full-duplex microphone/speaker environment.
 
-Current local capture configuration:
+The microphone must remain available to STT while Jeeva is speaking so interruption can be detected.
 
-```text
-AEC = enabled
-Noise suppression = disabled
-High-pass filter = enabled
-Automatic gain control = disabled
-```
-
-The microphone is **not replaced with silence while Jeeva speaks**.
-
-Real microphone audio continues flowing to STT so user interruption can be detected.
-
-This is a local development setup. Production Exotel audio handling will be implemented and validated separately.
+Local speaker/microphone acoustics can behave differently from a production telephony media stream. Interruption behavior therefore needs separate validation when the final telephony transport is integrated.
 
 ---
 
-## Planned Exotel Telephony Architecture
+## Planned Telephony Architecture
 
-The target production call flow is approximately:
+A future production phone-call flow is expected to look approximately like:
 
 ```text
 Customer phone
       ↓
-Exotel number
+Telephony provider
       ↓
-Exotel media / voicebot integration
+Media / voicebot integration
       ↓
 Jeeva audio bridge
       ↓
 STT → LLM → TTS
       ↓
-Audio returned to Exotel
+Audio returned to telephony provider
       ↓
 Customer hears Jeeva
 ```
 
-The caller's phone handles its own earpiece, speaker, wired headset, Bluetooth headset, or car audio.
-
-Jeeva receives the telephony audio stream rather than selecting the caller's physical audio device.
-
-Exotel integration is still pending and should be treated as a separate transport layer from the current local LiveKit development harness.
+The telephony layer is separate from the current local LiveKit execution harness.
 
 ---
 
 ## Known Limitations
 
-### Local first-attempt barge-in
+### Latest barge-in validation
 
-Hard interruption is implemented, but first-attempt speech detection is not perfectly reliable in the laptop speaker/microphone POC.
-
-This remains a local full-duplex test limitation and should be re-evaluated on the production telephony media path.
+Hard interruption exists in the runtime, but it was **not re-tested during the latest multilingual demo execution pass**.
 
 ### Conversation history
 
-The current OpenAI request is stateless.
+The current voice LLM flow does not yet provide a full persistent multi-turn memory system.
 
-Conversation/session history is not yet included in LLM context.
+### Session orchestration
 
-### In-memory Agent API sessions
+The current Agent Session Manager keeps runtime state locally and launches subprocesses for active sessions.
 
-`AgentSessionManager` stores active sessions in memory and launches subprocesses directly.
-
-This is sufficient for the current implementation but is not final production orchestration.
+This is suitable for current development/demo work but is not final distributed production orchestration.
 
 ### Telephony
 
-Exotel / PSTN integration is not implemented yet.
+Production Exotel/PSTN media integration is not yet part of the current voice pipeline.
 
-### Voice configuration
+### Agent CRUD integration
 
-Selectable male/female voices and accent configuration are not implemented yet.
-
-These should only be exposed through the API after the underlying TTS voice-selection functionality is implemented and tested.
+Post-call extraction runtime support exists, while the final mapping of Agent configuration into the main Agent CRUD/DB layer must remain aligned with the backend that owns Agent persistence.
 
 ---
 
@@ -922,9 +799,15 @@ Credentials belong in local environment files such as:
 .env.local
 ```
 
-Never commit API keys, API secrets, passwords, tokens, or private credentials.
+Never commit:
 
-Generated/local files such as `latency_log.csv`, Python caches, local audio files, and virtual environments should remain ignored by Git.
+- API keys
+- API secrets
+- database passwords
+- access tokens
+- refresh tokens
+- LiveKit secrets
+- provider credentials
 
 Before committing:
 
@@ -944,11 +827,11 @@ Keep STT, LLM, TTS, LiveKit transport, telephony, and backend orchestration sepa
 
 ### Provider independence
 
-Use provider interfaces instead of tightly coupling the pipeline to provider-specific logic.
+Use provider interfaces instead of tightly coupling the pipeline to one provider.
 
 ### Completed-utterance LLM calls
 
-Never call the LLM from interim STT output.
+Do not call the LLM from interim STT output.
 
 ### Streaming first
 
@@ -968,19 +851,52 @@ Prefer syntax checks, static verification, and targeted local tests before paid 
 
 ### API scope
 
-Expose APIs for features that are actually implemented.
+Expose APIs for functionality that actually exists. Avoid speculative endpoints for features that are not implemented.
 
-Do not add speculative endpoints for future product features until the underlying functionality exists.
+---
+
+## Latest Demo Verification
+
+The current execution-demo branch has been validated with:
+
+```text
+English   ✅
+Hindi     ✅
+Hinglish  ✅
+Marathi   ✅
+```
+
+The tested startup pattern is:
+
+```text
+Terminal 1 → STT service on port 8000
+Terminal 2 → Agent API on port 8001
+Terminal 3 → audio_publisher --language <mode>
+```
+
+The clean shutdown path has also been verified:
+
+```text
+Ctrl+C
+  ↓
+LiveKit client disconnects
+  ↓
+DELETE /api/v1/sessions/{session_id}
+  ↓
+Backend session ends
+```
+
+Barge-in should not be marked as re-tested by this latest execution pass.
 
 ---
 
 ## Next Steps
 
-1. Finalize the frontend Agent API structure.
-2. Add configurable voice selection and accent support.
-3. Expose implemented voice/accent options through the configuration catalog.
-4. Integrate Exotel telephony/media transport.
-5. Validate barge-in on the real phone-call media path.
-6. Add conversation/session context.
-7. Replace in-memory orchestration when production scaling requires it.
-8. Add automated tests for API validation, STT routing, turn dispatch, interruption, and session lifecycle.
+1. Keep the execution-demo README and commands aligned with the tested branch.
+2. Finalize integration between Agent persistence and runtime session configuration.
+3. Keep post-call extraction configuration aligned with the Agent CRUD/DB owner.
+4. Integrate production telephony/media transport.
+5. Re-test barge-in on the final production audio path.
+6. Add persistent conversational context where required.
+7. Replace local/in-memory session orchestration when production scaling requires it.
+8. Add automated coverage for language routing, session lifecycle, interruption, and post-call extraction.
