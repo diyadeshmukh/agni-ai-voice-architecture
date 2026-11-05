@@ -315,7 +315,8 @@ LANGUAGE_MODE_ALIASES = {
     "mr": "marathi",
     "marathi": "marathi",
 
-    # Legacy/debug
+    # Automatic language detection
+    "auto": "multi",
     "multi": "multi",
 }
 
@@ -340,19 +341,22 @@ class DeepgramSTTService:
     Backend routing:
 
         english
-            -> Flux English
+            -> Flux English (explicit single-language STT mode)
 
         hindi
-            -> Flux Multilingual + hi hint
+            -> Flux Multilingual + hi hint (explicit STT mode)
 
         hinglish
-            -> Flux Multilingual + en/hi hints
+            -> Flux Multilingual + en/hi hints (explicit STT mode)
 
         marathi
-            -> Nova-3 Marathi
+            -> Nova-3 Marathi (explicit single-language STT mode)
 
-        multi
-            -> Nova-3 legacy multilingual mode
+        multi / auto
+            -> Nova-3 multilingual auto-detection with code-switching
+
+    The integrated voice session always uses multi so callers can
+    switch between English, Hindi, Hinglish, and Marathi mid-call.
     """
 
     def __init__(
@@ -451,7 +455,8 @@ class DeepgramSTTService:
 
         else:
 
-            # Preserve the existing debug/manual mode.
+            # Nova-3 multilingual auto-detection.
+            # This supports language switching within one conversation.
             self.backend = "nova"
             self.model = "nova-3"
             self.language = "multi"

@@ -28,7 +28,7 @@ from app.services.agent_session_manager import (
 
 
 class CreateSessionRequest(BaseModel):
-    language: str = "english"
+    language: str = "auto"
     voice_id: str | None = None
     system_prompt: str | None = None
     welcome_message: str | None = None
@@ -52,7 +52,7 @@ class CreateSessionRequest(BaseModel):
         ):
             raise ValueError(
                 "language must be one of: "
-                "english, hindi, "
+                "auto, english, hindi, "
                 "hinglish, marathi"
             )
 

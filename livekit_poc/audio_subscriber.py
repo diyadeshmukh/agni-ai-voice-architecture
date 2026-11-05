@@ -132,38 +132,51 @@ STT_STREAM_ENDPOINT = os.getenv(
     "ws://127.0.0.1:8000/api/v1/stt/stream",
 )
 
-# User-facing language selection.
+# Session language is an initial/welcome preference only. It must not
+# restrict what the caller can speak or lock the assistant's replies.
+# Every live session uses Deepgram Nova-3 multilingual mode so the caller
+# can switch between English, Hindi, Hinglish, and Marathi mid-call.
 #
-# Examples:
-#
-#   AGNI_STT_LANGUAGE=english
-#   AGNI_STT_LANGUAGE=hindi
-#   AGNI_STT_LANGUAGE=hinglish
-#   AGNI_STT_LANGUAGE=marathi
-#
-# Canonical Deepgram values also remain supported:
-#
-#   en-IN
-#   hi
-#   mr
-#   multi
-#
-# Jeeva STT routing:
-#
-#   English  -> Flux / flux-general-en
-#   Hindi    -> Flux / flux-general-multi
-#   Hinglish -> Flux / flux-general-multi
-#   Marathi  -> Nova-3 / mr
-#
-# "multi" remains available as a legacy/debug mode.
+# AGNI_STT_LANGUAGE remains a backward-compatible fallback for local
+# runs that do not create a session through the Agent API.
 
-REQUESTED_STT_LANGUAGE = (
+SESSION_LANGUAGE_ALIASES = {
+    "auto": "auto",
+    "multi": "auto",
+    "en": "english",
+    "en-in": "english",
+    "english": "english",
+    "hi": "hindi",
+    "hindi": "hindi",
+    "hinglish": "hinglish",
+    "mr": "marathi",
+    "marathi": "marathi",
+}
+
+SUPPORTED_SESSION_LANGUAGES = {
+    "auto",
+    "english",
+    "hindi",
+    "hinglish",
+    "marathi",
+}
+
+_requested_session_language = (
     os.getenv("AGNI_SESSION_LANGUAGE")
-    or os.getenv(
-        "AGNI_STT_LANGUAGE",
-        "multi",
+    or os.getenv("AGNI_STT_LANGUAGE", "auto")
+).strip().lower()
+
+SESSION_LANGUAGE = SESSION_LANGUAGE_ALIASES.get(
+    _requested_session_language,
+    _requested_session_language,
+)
+
+if SESSION_LANGUAGE not in SUPPORTED_SESSION_LANGUAGES:
+    raise RuntimeError(
+        "Unsupported AGNI_SESSION_LANGUAGE: "
+        f"{_requested_session_language}. "
+        "Use auto, english, hindi, hinglish, or marathi."
     )
-).strip()
 
 SYSTEM_PROMPT = os.getenv(
     "AGNI_SESSION_SYSTEM_PROMPT"
@@ -231,42 +244,10 @@ def save_metrics() -> None:
         encoding="utf-8",
     )
 
-STT_LANGUAGE_ALIASES = {
-    # English
-    "en": "english",
-    "en-in": "english",
-    "english": "english",
-    # Hindi
-    "hi": "hindi",
-    "hindi": "hindi",
-    # Hinglish
-    "hinglish": "hinglish",
-    # Marathi
-    "mr": "marathi",
-    "marathi": "marathi",
-    # Optional legacy/debug mode
-    "multi": "multi",
-}
-
-STT_LANGUAGE = STT_LANGUAGE_ALIASES.get(
-    REQUESTED_STT_LANGUAGE.lower(),
-    REQUESTED_STT_LANGUAGE,
-)
-
-SUPPORTED_STT_LANGUAGES = {
-    "english",
-    "hindi",
-    "hinglish",
-    "marathi",
-    "multi",
-}
-if STT_LANGUAGE not in SUPPORTED_STT_LANGUAGES:
-    raise RuntimeError(
-        "Unsupported AGNI_STT_LANGUAGE: "
-        f"{REQUESTED_STT_LANGUAGE}. "
-        "Use English, Hindi, Hinglish, Marathi, "
-        "or en-IN, hi, mr, multi."
-    )
+# Do not derive the STT model from the UI/session language. A fixed
+# language here would stop the recognizer from transcribing a caller
+# who switches languages during the same call.
+STT_LANGUAGE = "multi"
 
 separator = (
     "&"
@@ -1541,9 +1522,12 @@ async def main() -> None:
     print(
         "Initializing OpenAI LLM provider..."
     )
+    # The selected session language controls only the initial greeting
+    # preference. The LLM must infer the response language from the
+    # caller's latest completed utterance on every turn.
     llm_provider = OpenAILLMProvider(
         instructions=SYSTEM_PROMPT,
-        response_language=REQUESTED_STT_LANGUAGE,
+        response_language="auto",
     )
     print(
         f"LLM ready: "
@@ -1871,12 +1855,15 @@ async def main() -> None:
             f"{STT_STREAM_ENDPOINT_WITH_LANGUAGE}"
         )
         print(
-            f"Requested STT language: "
-            f"{REQUESTED_STT_LANGUAGE}"
+            f"Session language preference: "
+            f"{SESSION_LANGUAGE}"
         )
         print(
             f"STT routing mode: "
-            f"{STT_LANGUAGE}"
+            f"Nova-3 multilingual ({STT_LANGUAGE})"
+        )
+        print(
+            "LLM response language: auto (latest caller utterance)"
         )
         print()
         print(

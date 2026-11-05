@@ -61,7 +61,8 @@ class ElevenLabsTTSProvider(TTSProvider):
 
     Both complete-text and streaming-text synthesis use the
     ElevenLabs Text-to-Dialogue WebSocket with
-    eleven_v3_conversational.
+    eleven_v3_conversational. The spoken language is inferred from
+    the generated text, not pinned to the session's initial language.
 
     Output format:
 

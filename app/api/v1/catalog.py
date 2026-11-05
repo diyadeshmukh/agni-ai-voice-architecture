@@ -19,11 +19,12 @@ from pydantic import BaseModel
 
 from app.services.agent_session_manager import (
     SUPPORTED_AGENT_LANGUAGES,
+    SUPPORTED_AUTO_RESPONSE_LANGUAGES,
 )
+
 from app.voice.voice_registry import (
     SUPPORTED_VOICE_GENDERS,
     filter_voices,
-    get_available_accents,
     get_configured_voices,
 )
 
@@ -35,6 +36,7 @@ router = APIRouter(
 
 
 LANGUAGE_LABELS = {
+    "auto": "Auto-detect",
     "english": "English",
     "hindi": "Hindi",
     "hinglish": "Hinglish",
@@ -94,7 +96,7 @@ def _normalize_language(
             status_code=422,
             detail=(
                 "language must be one of: "
-                "english, hindi, "
+                "auto, english, hindi, "
                 "hinglish, marathi"
             ),
         )
@@ -159,27 +161,28 @@ async def get_accents(
     ),
 ) -> AccentsResponse:
 
-    normalized_language = (
-        _normalize_language(
-            language
-        )
-    )
+    _normalize_language(language)
 
-    available_accents = (
-        get_available_accents(
-            language=normalized_language,
-        )
-    )
+    configured_voices = get_configured_voices()
 
-    # Accent labels come from configured voice profiles.
+    # Every session can switch between the four supported response
+    # languages, regardless of its initial greeting preference.
+    eligible_voices = [
+        voice
+        for voice in configured_voices
+        if SUPPORTED_AUTO_RESPONSE_LANGUAGES.issubset(
+            voice.languages
+        )
+    ]
+
+    available_accents = {
+        voice.accent
+        for voice in eligible_voices
+    }
+
     accent_labels = {
         voice.accent: voice.accent_label
-        for voice in get_configured_voices()
-        if (
-            normalized_language is None
-            or normalized_language
-            in voice.languages
-        )
+        for voice in eligible_voices
     }
 
     return AccentsResponse(
@@ -214,11 +217,7 @@ async def get_voices(
     ),
 ) -> VoicesResponse:
 
-    normalized_language = (
-        _normalize_language(
-            language
-        )
-    )
+    _normalize_language(language)
 
     normalized_gender = (
         _normalize_gender(
@@ -232,11 +231,22 @@ async def get_voices(
         else None
     )
 
+    # The caller may change language at any time, so only return voices
+    # that support all four response languages, regardless of the
+    # initial language preference selected in the UI.
     voices = filter_voices(
-        language=normalized_language,
+        language=None,
         accent=normalized_accent,
         gender=normalized_gender,
     )
+
+    voices = [
+        voice
+        for voice in voices
+        if SUPPORTED_AUTO_RESPONSE_LANGUAGES.issubset(
+            voice.languages
+        )
+    ]
 
     return VoicesResponse(
         voices=[

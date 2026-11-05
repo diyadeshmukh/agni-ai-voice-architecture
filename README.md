@@ -114,7 +114,7 @@ Interim STT transcripts may be shown for diagnostics, but they are **not sent to
                                 ▼
                     ┌───────────────────────┐
                     │      Deepgram STT     │
-                    │  Flux / Nova routing  │
+                    │ Nova-3 multilingual   │
                     └───────────┬───────────┘
                                 │
                       Completed Utterance
@@ -147,16 +147,15 @@ Interim STT transcripts may be shown for diagnostics, but they are **not sent to
 
 ## STT Language Routing
 
-The current user-facing demo modes are:
+The local demo supports `auto` (the default), `english`, `hindi`, `hinglish`, and `marathi` as initial greeting preferences.
 
-| Mode | Deepgram backend | Model / configuration |
-|---|---|---|
-| `english` | Flux | `flux-general-en` |
-| `hindi` | Flux | multilingual Flux with Hindi routing |
-| `hinglish` | Flux | multilingual Flux with English/Hindi routing |
-| `marathi` | Nova-3 | `nova-3` with Marathi language routing |
+**All integrated voice sessions use Deepgram Nova-3 multilingual mode** (`model=nova-3&language=multi`) for speech recognition. This allows the caller to switch between English, Hindi, Hinglish, and Marathi during one call, regardless of the initial greeting preference.
 
-The STT API also normalizes supported aliases where configured.
+The OpenAI response language is also automatic: each reply follows the caller's latest completed utterance. The selected session language does not lock the assistant's response language.
+
+The STT API still retains its explicit single-language modes for standalone/manual testing.
+
+For natural speech output, configure an ElevenLabs v3 voice that has been trained on the languages you plan to use. ElevenLabs determines language from the generated text; the voice's training data affects accent and pronunciation quality.
 
 ### Streaming STT endpoint
 
@@ -425,31 +424,22 @@ Do **not** add `--reload` on Windows for this service.
 
 ### Terminal 3 — Local microphone + speaker client
 
-English:
+Auto-detect (default):
+
+```powershell
+python -m livekit_poc.audio_publisher
+```
+
+You can also set the initial greeting preference explicitly:
 
 ```powershell
 python -m livekit_poc.audio_publisher --language english
-```
-
-Hindi:
-
-```powershell
 python -m livekit_poc.audio_publisher --language hindi
-```
-
-Hinglish:
-
-```powershell
 python -m livekit_poc.audio_publisher --language hinglish
-```
-
-Marathi:
-
-```powershell
 python -m livekit_poc.audio_publisher --language marathi
 ```
 
-The latest execution-demo pass successfully completed end-to-end turns in all four language modes.
+These options change the initial greeting only. During the call, STT remains multilingual and the assistant follows the caller's latest language.
 
 ### What the publisher does
 
@@ -627,14 +617,17 @@ For API-created sessions, runtime configuration is supplied by the Agent Session
 
 This is the local execution/demo client.
 
-It now supports:
+It supports:
 
 ```text
+--language auto      # default
 --language english
 --language hindi
 --language hinglish
 --language marathi
 ```
+
+The selected value controls the initial welcome message. It does not lock STT or the LLM response language.
 
 It uses the laptop microphone for input and the local speaker for Jeeva audio output.
 

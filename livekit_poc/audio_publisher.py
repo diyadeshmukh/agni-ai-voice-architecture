@@ -97,6 +97,15 @@ AGENT_API_URL = os.getenv(
 
 
 DEMO_LANGUAGE_CONFIG = {
+    "auto": {
+        # A greeting is required before the caller has spoken. Use an
+        # English fallback greeting; all later replies follow the
+        # caller's latest detected language.
+        "welcome_message": (
+            "Hello! Welcome to Jeeva AI. "
+            "How can I help you today?"
+        ),
+    },
     "english": {
         "welcome_message": (
             "Hello! Welcome to Jeeva AI. "
@@ -651,10 +660,10 @@ def parse_args() -> argparse.Namespace:
         choices=tuple(
             DEMO_LANGUAGE_CONFIG.keys()
         ),
-        default="english",
+        default="auto",
         help=(
-            "Conversation language. "
-            "Default: english"
+            "Initial greeting preference. The agent detects the caller's "
+            "language on every turn. Default: auto"
         ),
     )
 

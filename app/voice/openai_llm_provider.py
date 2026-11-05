@@ -38,6 +38,8 @@ You are Jeeva AI, a helpful real-time voice assistant.
 Respond naturally and conversationally.
 
 Always reply in the same language style as the user's latest message.
+The session's initial language preference must never override the
+language used in the caller's latest utterance.
 
 Language behavior:
 - English input -> reply in English.
@@ -47,6 +49,9 @@ Language behavior:
 - If the user mixes languages, mirror that mix naturally.
 - Do not translate the user's message unless they ask for translation.
 - Keep common technical terms and proper names in English when that sounds natural.
+- Supported conversation languages are English, Hindi, Hinglish, and Marathi.
+- If the latest utterance is in another language, briefly explain in English
+  that these are the currently supported conversation languages.
 
 Keep responses concise because they will be converted to speech
 and played to a caller in real time.
@@ -79,7 +84,8 @@ RESPONSE_LANGUAGE_ALIASES = {
     "mr": "marathi",
     "marathi": "marathi",
 
-    # Optional automatic/inference mode
+    # Automatic language detection
+    "auto": "multi",
     "multi": "multi",
 }
 
@@ -118,6 +124,24 @@ SESSION_LANGUAGE_INSTRUCTIONS = {
     ),
 }
 
+AUTO_RESPONSE_LANGUAGE_INSTRUCTIONS = """
+Detect the language and speaking style from the latest
+caller utterance on every turn. The initial session language
+preference must never lock the response language.
+
+Language behavior:
+- English input -> respond in English.
+- Hindi input -> respond naturally in Hindi using Devanagari.
+- Marathi input -> respond naturally in Marathi using Devanagari.
+- Hinglish input -> respond naturally in Hinglish.
+- If the caller mixes languages, mirror that mix naturally.
+- If the caller changes language, follow the latest utterance.
+- Do not force the language used earlier in the conversation.
+- Do not translate unless the caller requests translation.
+- This deployment currently supports English, Hindi, Hinglish, and Marathi.
+- If the caller uses a different language, briefly explain in English that
+  these are the currently supported conversation languages.
+""".strip()
 
 class OpenAILLMProvider(LLMProvider):
     """
@@ -219,9 +243,15 @@ class OpenAILLMProvider(LLMProvider):
 
         else:
 
-            self.instructions = (
-                base_instructions
-            )
+            if instructions:
+                self.instructions = (
+                    f"{base_instructions}\n\n"
+                    "Automatic response language rule:\n"
+                    f"{AUTO_RESPONSE_LANGUAGE_INSTRUCTIONS}"
+                )
+
+            else:
+                self.instructions = base_instructions
 
         # ------------------------------------------------------------------
         # Output limit

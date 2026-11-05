@@ -72,11 +72,16 @@ PROJECT_ROOT = (
 )
 
 
-SUPPORTED_AGENT_LANGUAGES = {
+SUPPORTED_AUTO_RESPONSE_LANGUAGES = {
     "english",
     "hindi",
     "hinglish",
     "marathi",
+}
+
+SUPPORTED_AGENT_LANGUAGES = {
+    "auto",
+    *SUPPORTED_AUTO_RESPONSE_LANGUAGES,
 }
 
 
@@ -384,7 +389,7 @@ class AgentSessionManager:
 
             raise ValueError(
                 "Unsupported language. "
-                "Use english, hindi, "
+                "Use auto, english, hindi, "
                 "hinglish, or marathi."
             )
 
@@ -501,10 +506,20 @@ class AgentSessionManager:
                     "Unknown voice_id."
                 )
 
-            if language not in voice.languages:
+            # The selected language is only an initial greeting/session
+            # preference. The caller can switch languages at any time,
+            # so every selected voice must support all four response
+            # languages for every session mode.
+            missing_languages = (
+                SUPPORTED_AUTO_RESPONSE_LANGUAGES
+                - voice.languages
+            )
+
+            if missing_languages:
                 raise ValueError(
-                    "Selected voice does not support "
-                    f"language '{language}'."
+                    "Language switching requires a voice supporting "
+                    "English, Hindi, Hinglish, and Marathi. Missing: "
+                    + ", ".join(sorted(missing_languages))
                 )
 
             if voice.provider != "elevenlabs":

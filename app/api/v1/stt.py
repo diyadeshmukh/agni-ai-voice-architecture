@@ -196,7 +196,8 @@ async def stt_stream(
         "mr": "marathi",
         "marathi": "marathi",
 
-        # Optional legacy/debug mode
+        # Automatic language detection
+        "auto": "multi",
         "multi": "multi",
     }
 
